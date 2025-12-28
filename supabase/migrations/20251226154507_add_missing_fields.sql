@@ -1,0 +1,2 @@
+-- Applied via MCP Supabase
+-- Migration already exists on server

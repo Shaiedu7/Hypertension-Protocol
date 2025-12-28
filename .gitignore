@@ -1,0 +1,33 @@
+# Environment variables with sensitive credentials
+app/.env
+
+# macOS
+.DS_Store
+
+# Node modules
+node_modules/
+app/node_modules/
+
+# Supabase local files
+supabase/.temp/
+
+# Build outputs
+app/.expo/
+app/dist/
+app/web-build/
+app/ios/build/
+app/ios/Pods/
+app/android/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Sensitive scripts with hardcoded credentials
+check-schema.js
