@@ -11,23 +11,8 @@ export class NotificationDispatcher {
    * Dispatch notification for first high BP reading
    */
   static async notifyFirstHighBP(patientId: string, systolic: number, diastolic: number) {
-    const priority = WorkflowEngine.getNotificationPriority('first_high_bp');
-    
-    await scheduleNotification(
-      'High BP Detected',
-      `BP: ${systolic}/${diastolic}. Complete positioning checklist and recheck in 15 minutes.`,
-      { patientId, event: 'first_high_bp' },
-      priority
-    );
-
-    await DatabaseService.createNotification(
-      priority,
-      'High BP Detected',
-      `Patient BP: ${systolic}/${diastolic}. Recheck required in 15 minutes.`,
-      'nurse',
-      undefined,
-      patientId
-    );
+    // Intentionally no user-facing notification here; timer start is implicit
+    // (kept for potential future audit needs; currently no-op by design)
   }
 
   /**
@@ -42,7 +27,7 @@ export class NotificationDispatcher {
     const priority = WorkflowEngine.getNotificationPriority('confirmed_emergency');
     const location = roomNumber ? ` in Room ${roomNumber}` : '';
     
-    // Notify nurse and resident
+    // System notification
     await scheduleNotification(
       '🚨 HYPERTENSIVE EMERGENCY',
       `Confirmed emergency${location}. BP: ${systolic}/${diastolic}. Immediate treatment required.`,
@@ -50,20 +35,31 @@ export class NotificationDispatcher {
       priority
     );
 
-    // Create notifications for both roles
+    // Notify nurse (they may need to assist/prepare)
     await DatabaseService.createNotification(
       priority,
       'HYPERTENSIVE EMERGENCY CONFIRMED',
-      `Patient${location} has confirmed severe hypertension (BP: ${systolic}/${diastolic}). Immediate intervention required.`,
+      `Patient${location} has confirmed severe hypertension (BP: ${systolic}/${diastolic}). Emergency protocol activated.`,
       'nurse',
       undefined,
       patientId
     );
 
+    // Notify charge nurse (supervisor awareness)
+    await DatabaseService.createNotification(
+      priority,
+      'HYPERTENSIVE EMERGENCY CONFIRMED',
+      `Patient${location} has confirmed severe hypertension (BP: ${systolic}/${diastolic}). Monitoring required.`,
+      'chargeNurse',
+      undefined,
+      patientId
+    );
+
+    // Notify resident (they need to select algorithm)
     await DatabaseService.createNotification(
       priority,
       'HYPERTENSIVE EMERGENCY - ACTION REQUIRED',
-      `New emergency${location}. BP: ${systolic}/${diastolic}. Select treatment algorithm.`,
+      `New emergency${location}. BP: ${systolic}/${diastolic}. Select treatment algorithm immediately.`,
       'resident',
       undefined,
       patientId
@@ -77,19 +73,24 @@ export class NotificationDispatcher {
     patientId: string,
     medicationName: string,
     dose: string,
-    orderedBy: string
+    orderedBy: string,
+    roomNumber?: string
   ) {
+    const location = roomNumber ? ` (Room ${roomNumber})` : '';
+    
+    // System notification
     await scheduleNotification(
       'Medication Ordered',
-      `${medicationName} ${dose} ordered by resident. Administer dose.`,
+      `${medicationName} ${dose} ordered${location}. Administer dose now.`,
       { patientId, event: 'medication_ordered' },
-      'info'
+      'critical'
     );
 
+    // Notify nurse only (they need to administer)
     await DatabaseService.createNotification(
-      'info',
-      'Medication Order Ready',
-      `${medicationName} ${dose} has been ordered. Please administer.`,
+      'critical',
+      'MEDICATION ORDER - ADMINISTER NOW',
+      `${medicationName} ${dose} has been ordered${location}. Administer immediately per protocol.`,
       'nurse',
       undefined,
       patientId
@@ -149,7 +150,7 @@ export class NotificationDispatcher {
       ? `BP recheck timer expired${location}. Take confirmatory reading NOW.`
       : `Medication wait complete${location}. Check BP NOW.`;
 
-    // Critical alert - notify nurse, resident, and charge nurse
+    // System notification
     await scheduleNotification(
       '⚠️ TIMER EXPIRED',
       message,
@@ -157,11 +158,12 @@ export class NotificationDispatcher {
       priority
     );
 
-    const recipients: UserRole[] = ['nurse', 'resident', 'chargeNurse'];
+    // Notify only nurse and charge nurse (they take BP readings)
+    const recipients: ('nurse' | 'chargeNurse')[] = ['nurse', 'chargeNurse'];
     for (const role of recipients) {
       await DatabaseService.createNotification(
         priority,
-        'TIMER EXPIRED - ACTION REQUIRED',
+        'TIMER EXPIRED - BP CHECK REQUIRED',
         message,
         role,
         undefined,
@@ -208,6 +210,36 @@ export class NotificationDispatcher {
       'resident',
       undefined,
       patientId
+    );
+  }
+
+  /**
+   * Dispatch notification when algorithm is selected
+   */
+  static async notifyAlgorithmSelected(
+    patient: any,
+    algorithm: string
+  ) {
+    const location = patient.room ? ` (Room ${patient.room})` : '';
+    
+    // Notify nurse (awareness and preparation)
+    await DatabaseService.createNotification(
+      'info',
+      'Treatment Algorithm Selected',
+      `${algorithm.charAt(0).toUpperCase() + algorithm.slice(1)} protocol selected for patient${location}. Be prepared to administer medication.`,
+      'nurse',
+      undefined,
+      patient.id
+    );
+
+    // Notify charge nurse (supervisor awareness)
+    await DatabaseService.createNotification(
+      'info',
+      'Treatment Protocol Initiated',
+      `${algorithm.charAt(0).toUpperCase() + algorithm.slice(1)} algorithm selected${location}. Monitoring case.`,
+      'chargeNurse',
+      undefined,
+      patient.id
     );
   }
 

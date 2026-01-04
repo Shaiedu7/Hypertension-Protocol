@@ -17,7 +17,6 @@ export default function ResidentDashboard() {
     activeSession, 
     patient, 
     selectAlgorithm, 
-    orderMedication,
     escalateSession,
     activeTimer,
     focusSession
@@ -79,27 +78,14 @@ export default function ResidentDashboard() {
     setRefreshing(false);
   };
 
-  const handleSelectAlgorithm = (algorithm: MedicationAlgorithm) => {
+  const handleSelectAlgorithm = async (algorithm: MedicationAlgorithm) => {
     if (selectedPatientSession) {
-      selectAlgorithm(algorithm);
+      await selectAlgorithm(algorithm);
       setShowAlgorithmModal(false);
       setSelectedPatientSession(null);
-    }
-  };
-
-  const handleOrderNextDose = async () => {
-    if (!activeSession || !patient) return;
-
-    const currentStep = activeSession.current_step;
-    const algorithm = activeSession.algorithm_selected;
-    
-    if (!algorithm) return;
-
-    const protocol = MEDICATION_PROTOCOLS[algorithm];
-    const nextDose = protocol.doses[currentStep];
-
-    if (nextDose) {
-      await orderMedication(nextDose.medication, nextDose.dose, nextDose.route, nextDose.waitTime);
+      // Refresh data while keeping session focused
+      await loadPatientData();
+      await loadAllEmergencies();
     }
   };
 
@@ -110,14 +96,6 @@ export default function ResidentDashboard() {
     const nextDose = protocol.doses[activeSession.current_step];
     
     return nextDose;
-  };
-
-  const canOrderNextDose = () => {
-    if (!activeSession) return false;
-    
-    const lastMed = medications[medications.length - 1];
-    const waitTimerActive = activeTimer?.is_active && activeTimer.type === 'medication_wait';
-    return (!lastMed || lastMed.administered_at !== null) && !waitTimerActive;
   };
 
   return (
@@ -183,22 +161,23 @@ export default function ResidentDashboard() {
 
                 {activeTimer && (
                   <View style={styles.timerBox}>
-                    <TimerCountdown timer={activeTimer} size="large" />
+                    <Text style={styles.timerLabel}>
+                      {activeTimer.type === 'medication_wait' ? '⏱️ Wait Time' : '⚠️ Administration Deadline'}
+                    </Text>
+                    <TimerCountdown timer={activeTimer} size="medium" />
                   </View>
                 )}
 
-                {/* Next Dose Action */}
-                {getNextDoseInfo() && canOrderNextDose() && (
+                {/* Next Dose Info (read-only) */}
+                {getNextDoseInfo() && (
                   <View style={styles.nextDoseCard}>
-                    <Text style={styles.nextDoseTitle}>Next Dose Ready</Text>
+                    <Text style={styles.nextDoseTitle}>Next Dose</Text>
                     <Text style={styles.nextDoseDetails}>
                       {getNextDoseInfo()?.medication} {getNextDoseInfo()?.dose} {getNextDoseInfo()?.route}
                     </Text>
-                    <ActionButton
-                      label="Order Dose"
-                      onPress={handleOrderNextDose}
-                      variant="primary"
-                    />
+                    <Text style={styles.nextDoseNote}>
+                      Nurse will administer and record; app tracks timing automatically.
+                    </Text>
                   </View>
                 )}
 
@@ -250,7 +229,11 @@ export default function ResidentDashboard() {
               <Text style={styles.emptyText}>No active emergencies</Text>
             ) : (
               allEmergencies.map(({ patient: p, session }) => (
-                <View key={session.id} style={styles.emergencyCard}>
+                <TouchableOpacity 
+                  key={session.id} 
+                  style={styles.emergencyCard}
+                  onPress={() => focusSession(session, p)}
+                >
                   <PatientCard patient={p} emergencySession={session} />
                   {!session.algorithm_selected && (
                     <TouchableOpacity
@@ -264,7 +247,7 @@ export default function ResidentDashboard() {
                       <Text style={styles.selectButtonText}>Select Algorithm</Text>
                     </TouchableOpacity>
                   )}
-                </View>
+                </TouchableOpacity>
               ))
             )}
           </View>
@@ -294,24 +277,36 @@ export default function ResidentDashboard() {
               onPress={() => !patient?.has_asthma && handleSelectAlgorithm('labetalol')}
               disabled={patient?.has_asthma}
             >
-              <Text style={styles.algorithmButtonTitle}>Labetalol</Text>
-              <Text style={styles.algorithmButtonDesc}>IV: 20mg → 40mg → 80mg</Text>
+              <Text style={styles.algorithmButtonTitle}>Labetalol IV</Text>
+              <Text style={styles.algorithmButtonDesc}>20mg → 40mg → 80mg</Text>
+              <Text style={styles.algorithmDetails}>• Wait 10 min between doses</Text>
+              <Text style={styles.algorithmDetails}>• Combined α and β-blocker</Text>
+              <Text style={styles.algorithmDetails}>• Contraindicated: Asthma</Text>
+              <Text style={styles.algorithmDetails}>• Peak effect: 15-30 min</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.algorithmButton}
               onPress={() => handleSelectAlgorithm('hydralazine')}
             >
-              <Text style={styles.algorithmButtonTitle}>Hydralazine</Text>
-              <Text style={styles.algorithmButtonDesc}>IV: 5mg → 10mg → 10mg</Text>
+              <Text style={styles.algorithmButtonTitle}>Hydralazine IV</Text>
+              <Text style={styles.algorithmButtonDesc}>5-10mg → 10mg → 10mg</Text>
+              <Text style={styles.algorithmDetails}>• Wait 20 min between doses</Text>
+              <Text style={styles.algorithmDetails}>• Arterial smooth muscle dilator</Text>
+              <Text style={styles.algorithmDetails}>• Side effects: Headache, flushing</Text>
+              <Text style={styles.algorithmDetails}>• Peak effect: 5 min</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.algorithmButton}
               onPress={() => handleSelectAlgorithm('nifedipine')}
             >
-              <Text style={styles.algorithmButtonTitle}>Nifedipine</Text>
-              <Text style={styles.algorithmButtonDesc}>PO: 10mg → 20mg → 20mg</Text>
+              <Text style={styles.algorithmButtonTitle}>Nifedipine PO</Text>
+              <Text style={styles.algorithmButtonDesc}>10mg → 20mg → 20mg</Text>
+              <Text style={styles.algorithmDetails}>• Wait 20 min between doses</Text>
+              <Text style={styles.algorithmDetails}>• Calcium channel blocker</Text>
+              <Text style={styles.algorithmDetails}>• Side effects: Tachycardia, headache</Text>
+              <Text style={styles.algorithmDetails}>• Peak effect: 30-60 min</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -432,16 +427,25 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   protocolSection: {
-    marginTop: 16,
+    marginTop: 12,
   },
   protocolTitle: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#007bff',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   timerBox: {
-    marginVertical: 16,
+    marginVertical: 8,
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 8,
+  },
+  timerLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
   },
   nextDoseCard: {
     backgroundColor: '#d4edda',
@@ -460,7 +464,32 @@ const styles = StyleSheet.create({
   nextDoseDetails: {
     fontSize: 14,
     color: '#155724',
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  nextDoseNote: {
+    fontSize: 12,
+    color: '#155724',
     marginBottom: 12,
+    fontStyle: 'italic',
+  },
+  waitingCard: {
+    backgroundColor: '#fff3cd',
+    padding: 16,
+    borderRadius: 12,
+    marginVertical: 16,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+  },
+  waitingTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#856404',
+    marginBottom: 4,
+  },
+  waitingText: {
+    fontSize: 14,
+    color: '#856404',
   },
   bpHistorySection: {
     backgroundColor: '#fff',
@@ -602,6 +631,14 @@ const styles = StyleSheet.create({
   algorithmButtonDesc: {
     fontSize: 14,
     color: '#fff',
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  algorithmDetails: {
+    fontSize: 12,
+    color: '#e8f4f8',
+    marginTop: 2,
+    paddingLeft: 4,
   },
   cancelButton: {
     padding: 12,

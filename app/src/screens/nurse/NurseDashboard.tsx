@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Modal, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useEmergencySession } from '../../contexts/EmergencySessionContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { DatabaseService } from '../../services/databaseService';
 import { Patient, MedicationDose } from '../../types';
+import { MEDICATION_PROTOCOLS } from '../../utils/constants';
 import TimerCountdown from '../../components/TimerCountdown';
 import PatientCard from '../../components/PatientCard';
 import ActionButton from '../../components/ActionButton';
 
 export default function NurseDashboard({ navigation }: any) {
   const { user, signOut } = useAuth();
-  const { activeSession, patient, activeTimer, medications } = useEmergencySession();
+  const { activeSession, patient, activeTimer, medications, selectAlgorithm, giveNextDose, focusSession } = useEmergencySession();
   const [allPatients, setAllPatients] = useState<Patient[]>([]);
   const [pendingMeds, setPendingMeds] = useState<MedicationDose[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -22,6 +24,15 @@ export default function NurseDashboard({ navigation }: any) {
   const [patientBPs, setPatientBPs] = useState<{ [key: string]: { systolic: number; diastolic: number; timestamp: string } }>({});
   const [patientTimers, setPatientTimers] = useState<{ [key: string]: any }>({});
   const [patientSessions, setPatientSessions] = useState<{ [key: string]: any }>({});
+  const [showAlgorithmModal, setShowAlgorithmModal] = useState(false);
+  const [selectedSessionData, setSelectedSessionData] = useState<{ session: any; patient: Patient } | null>(null);
+
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadPatients();
+    }, [])
+  );
 
   useEffect(() => {
     loadPatients();
@@ -108,6 +119,28 @@ export default function NurseDashboard({ navigation }: any) {
     setRefreshing(false);
   };
 
+  const getNextDose = (session: any) => {
+    if (!session?.algorithm_selected) return null;
+    const protocol = MEDICATION_PROTOCOLS[session.algorithm_selected as keyof typeof MEDICATION_PROTOCOLS];
+    if (!protocol) return null;
+    return protocol.doses[session.current_step];
+  };
+
+  const handleSelectAlgorithm = async (algorithm: 'labetalol' | 'hydralazine' | 'nifedipine') => {
+    if (!selectedSessionData) return;
+    focusSession(selectedSessionData.session, selectedSessionData.patient);
+    await selectAlgorithm(algorithm);
+    setShowAlgorithmModal(false);
+    setSelectedSessionData(null);
+    await loadPatients();
+  };
+
+  const handleGiveNextDose = async (session: any, p: Patient) => {
+    focusSession(session, p);
+    await giveNextDose();
+    await loadPatients();
+  };
+
   const handleCreatePatient = async () => {
     if (!newPatientRoom.trim()) {
       Alert.alert('Error', 'Please enter a room number');
@@ -174,58 +207,83 @@ export default function NurseDashboard({ navigation }: any) {
         </TouchableOpacity>
       </View>
 
-      {/* Active Emergency Section */}
-      {activeSession && patient && (
+      {/* Active Emergencies Section - Show ALL active emergencies */}
+      {Object.keys(patientSessions).length > 0 && (
         <View style={styles.activeEmergency}>
-          <Text style={styles.sectionTitle}>🚨 Active Emergency</Text>
+          <Text style={styles.sectionTitle}>🚨 Active Emergencies</Text>
           
-          {/* Goal BP Banner */}
-          <View style={styles.goalBPBanner}>
-            <Text style={styles.goalBPTitle}>🎯 TARGET BLOOD PRESSURE</Text>
-            <Text style={styles.goalBPValue}>130-150 / 80-100 mmHg</Text>
-            <Text style={styles.goalBPSubtext}>Continue treatment until goal achieved</Text>
-          </View>
-          
-          <PatientCard 
-            patient={patient}
-            emergencySession={activeSession}
-            showDetails
-          />
-
-          {activeTimer && (
-            <View style={styles.timerSection}>
-              <TimerCountdown timer={activeTimer} size="medium" />
-            </View>
-          )}
-
-          {pendingMeds.length > 0 && (
-            <View style={styles.medicationsSection}>
-              <Text style={styles.medicationTitle}>Pending Medications</Text>
-              {pendingMeds.map((med) => (
-                <View key={med.id} style={styles.medicationCard}>
-                  <View>
-                    <Text style={styles.medicationName}>
-                      {med.medication_name} {med.dose_amount}
+          {allPatients
+            .filter(p => patientSessions[p.id])
+            .map(p => {
+              const session = patientSessions[p.id];
+              const timer = patientTimers[p.id];
+              
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={styles.emergencyCard}
+                  onPress={() => navigation.navigate('BPEntry', { patient: p })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.emergencyHeader}>
+                    <Text style={styles.emergencyRoom}>
+                      {p.room_number ? `Room ${p.room_number}` : p.anonymous_identifier}
                     </Text>
-                    <Text style={styles.medicationTime}>
-                      Ordered at {new Date(med.ordered_at).toLocaleTimeString()}
-                    </Text>
+                    {p.has_asthma && (
+                      <Text style={styles.emergencyAsthma}>⚠️ Asthma</Text>
+                    )}
                   </View>
-                  <ActionButton
-                    label="Mark Administered"
-                    onPress={() => {/* TODO: Implement */}}
-                    variant="primary"
-                  />
-                </View>
-              ))}
-            </View>
-          )}
 
-          <ActionButton
-            label="Record BP Reading"
-            onPress={() => navigation.navigate('BPEntry', { patient })}
-            variant="primary"
-          />
+                  {patientBPs[p.id] && (
+                    <Text style={styles.emergencyBP}>
+                      BP: {patientBPs[p.id].systolic}/{patientBPs[p.id].diastolic} mmHg
+                    </Text>
+                  )}
+
+                  {session.algorithm_selected && (
+                    <Text style={styles.emergencyAlgorithm}>
+                      {session.algorithm_selected.toUpperCase()} - Step {session.current_step}
+                    </Text>
+                  )}
+
+                  {timer && (
+                    <View style={styles.emergencyTimerCompact} pointerEvents="none">
+                      <TimerCountdown timer={timer} size="small" />
+                    </View>
+                  )}
+
+                  {!session.algorithm_selected && (
+                    <TouchableOpacity
+                      style={styles.selectAlgoButton}
+                      onPress={() => {
+                        setSelectedSessionData({ session, patient: p });
+                        setShowAlgorithmModal(true);
+                      }}
+                    >
+                      <Text style={styles.selectAlgoText}>Select Algorithm</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {session.algorithm_selected && getNextDose(session) && (
+                    <View style={styles.nextDoseCompact}>
+                      <Text style={styles.nextDoseLabel}>Next Dose</Text>
+                      <Text style={styles.nextDoseValue}>
+                        {getNextDose(session)?.medication} {getNextDose(session)?.dose} {getNextDose(session)?.route}
+                      </Text>
+                      <ActionButton
+                        label="Mark Given"
+                        onPress={() => handleGiveNextDose(session, p)}
+                        variant="primary"
+                      />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+            
+          <View style={styles.targetBanner}>
+            <Text style={styles.targetText}>🎯 Target: 130-150 / 80-100 mmHg</Text>
+          </View>
         </View>
       )}
 
@@ -261,6 +319,62 @@ export default function NurseDashboard({ navigation }: any) {
         )}
       </View>
     </ScrollView>
+
+    {/* Algorithm Selection Modal (Nurse) */}
+    <Modal
+      visible={showAlgorithmModal}
+      animationType="slide"
+      transparent
+      onRequestClose={() => setShowAlgorithmModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Select Treatment Algorithm</Text>
+
+          {selectedSessionData?.patient.has_asthma && (
+            <View style={styles.warningBox}>
+              <Text style={styles.warningText}>⚠️ PATIENT HAS ASTHMA</Text>
+              <Text style={styles.warningSubtext}>Labetalol is contraindicated</Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.algorithmButton, selectedSessionData?.patient.has_asthma && styles.contraindicated]}
+            onPress={() => !selectedSessionData?.patient.has_asthma && handleSelectAlgorithm('labetalol')}
+            disabled={selectedSessionData?.patient.has_asthma}
+          >
+            <Text style={styles.algorithmButtonTitle}>Labetalol IV</Text>
+            <Text style={styles.algorithmButtonDesc}>20mg → 40mg → 80mg</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.algorithmButton}
+            onPress={() => handleSelectAlgorithm('hydralazine')}
+          >
+            <Text style={styles.algorithmButtonTitle}>Hydralazine IV</Text>
+            <Text style={styles.algorithmButtonDesc}>5-10mg → 10mg → 10mg</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.algorithmButton}
+            onPress={() => handleSelectAlgorithm('nifedipine')}
+          >
+            <Text style={styles.algorithmButtonTitle}>Nifedipine PO</Text>
+            <Text style={styles.algorithmButtonDesc}>10mg → 20mg → 20mg</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => {
+              setShowAlgorithmModal(false);
+              setSelectedSessionData(null);
+            }}
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
 
     {/* Add Patient Modal */}
     <Modal
@@ -349,6 +463,46 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
+  warningBox: {
+    backgroundColor: '#fff3cd',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+  },
+  warningText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#856404',
+    textAlign: 'center',
+  },
+  warningSubtext: {
+    fontSize: 14,
+    color: '#856404',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  algorithmButton: {
+    backgroundColor: '#007bff',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  contraindicated: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
+  algorithmButtonTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  algorithmButtonDesc: {
+    fontSize: 13,
+    color: '#e8f4f8',
+  },
     fontWeight: 'bold',
     color: '#333',
   },
@@ -400,6 +554,92 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 12,
+  },
+  emergencyCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#dc3545',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  emergencyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  emergencyRoom: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+  },
+  emergencyAsthma: {
+    fontSize: 11,
+    color: '#856404',
+  },
+  emergencyBP: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#dc3545',
+    marginBottom: 4,
+  },
+  emergencyAlgorithm: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 6,
+  },
+  emergencyTimerCompact: {
+    marginTop: 4,
+  },
+  selectAlgoButton: {
+    marginTop: 8,
+    backgroundColor: '#007bff',
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  selectAlgoText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  nextDoseCompact: {
+    marginTop: 10,
+    backgroundColor: '#e8f5e9',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#28a745',
+  },
+  nextDoseLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#155724',
+    marginBottom: 4,
+  },
+  nextDoseValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#155724',
+    marginBottom: 8,
+  },
+  targetBanner: {
+    backgroundColor: '#e8f4f8',
+    padding: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  targetText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0066cc',
   },
   timerSection: {
     marginVertical: 12,

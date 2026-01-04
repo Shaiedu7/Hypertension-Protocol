@@ -40,7 +40,10 @@ export function AppNavigator() {
               <Stack.Screen name="AttendingDashboard" component={AttendingDashboard} />
             )}
             {user.role === 'chargeNurse' && (
-              <Stack.Screen name="ChargeNurseDashboard" component={ChargeNurseDashboard} />
+              <>
+                <Stack.Screen name="ChargeNurseDashboard" component={ChargeNurseDashboard} />
+                <Stack.Screen name="BPEntry" component={BPEntryScreen} />
+              </>
             )}
           </>
         )}

@@ -4,12 +4,13 @@
 import { supabase, TABLES } from './supabase';
 import { Timer } from '../types';
 import { scheduleNotification } from './notifications';
+import { LiveActivityService } from './liveActivityService';
 
 export class TimerService {
   /**
    * Create a BP recheck timer (15 minutes after first high BP)
    */
-  static async createBPRecheckTimer(patientId: string): Promise<Timer> {
+  static async createBPRecheckTimer(patientId: string, patientRoom?: string): Promise<Timer> {
     const durationMinutes = 15;
     const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
 
@@ -27,13 +28,21 @@ export class TimerService {
 
     if (error) throw error;
 
-    // Schedule local notification
+    // Schedule a time-based notification so it fires even if app is backgrounded/killed
     await scheduleNotification(
-      'BP Recheck Required',
-      'Time to take confirmatory blood pressure reading',
+      'BP Recheck Due',
+      'Take confirmatory blood pressure reading now.',
       { patientId, type: 'bp_recheck' },
-      'warning'
+      'critical',
+      { type: 'timeInterval', seconds: durationMinutes * 60, repeats: false }
     );
+
+    // Start Live Activity for the timer
+    await LiveActivityService.startTimerActivity({
+      timerType: 'bp_recheck',
+      expiresAt: expiresAt.toISOString(),
+      patientRoom: patientRoom || 'Patient'
+    });
 
     return data as Timer;
   }
@@ -42,7 +51,7 @@ export class TimerService {
    * Create an administration deadline timer (30-60 min after emergency confirmed)
    * Per RWJ protocol: medication should be administered within 30-60 minutes
    */
-  static async createAdministrationDeadlineTimer(patientId: string): Promise<Timer> {
+  static async createAdministrationDeadlineTimer(patientId: string, patientRoom?: string): Promise<Timer> {
     // Using 45 minutes as midpoint of 30-60 min window
     const durationMinutes = 45;
     const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
@@ -61,12 +70,24 @@ export class TimerService {
 
     if (error) throw error;
 
-    // Schedule urgent notification
+    // Notify resident - they need to select algorithm and order medication
+    const location = patientRoom ? ` (Room ${patientRoom})` : '';
     await scheduleNotification(
-      '🚨 MEDICATION DEADLINE',
-      'First medication dose must be administered soon (30-60 min window)',
+      '⏰ MEDICATION DEADLINE',
+      `Select algorithm and order first dose${location}. Must be administered within 45 minutes.`,
       { patientId, type: 'administration_deadline' },
       'critical'
+    );
+
+    // Create database notification for resident only (next action required by them)
+    const { DatabaseService } = await import('./databaseService');
+    await DatabaseService.createNotification(
+      'critical',
+      'MEDICATION DEADLINE - SELECT ALGORITHM',
+      `Emergency protocol requires first medication dose within 30-60 minutes${location}. Select treatment algorithm and order medication immediately.`,
+      'resident',
+      undefined,
+      patientId
     );
 
     return data as Timer;
@@ -94,12 +115,13 @@ export class TimerService {
 
     if (error) throw error;
 
-    // Schedule local notification for when timer expires
+    // Schedule time-based notification for medication wait completion
     await scheduleNotification(
       'BP Check Required',
       `Time to check blood pressure (${waitMinutes} min wait complete)`,
       { patientId, type: 'medication_wait' },
-      'critical'
+      'critical',
+      { type: 'timeInterval', seconds: waitMinutes * 60, repeats: false }
     );
 
     return data as Timer;
@@ -117,6 +139,9 @@ export class TimerService {
       .eq('id', timerId);
 
     if (error) throw error;
+
+    // End Live Activity when timer is deactivated
+    await LiveActivityService.endCurrentActivity();
   }
 
   /**
@@ -178,5 +203,8 @@ export class TimerService {
       .eq('is_active', true);
 
     if (error) throw error;
+
+    // End Live Activity when all timers are deactivated
+    await LiveActivityService.endCurrentActivity();
   }
 }

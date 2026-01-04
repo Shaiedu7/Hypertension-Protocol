@@ -21,6 +21,7 @@ interface EmergencySessionContextType {
   recordBPReading: (systolic: number, diastolic: number, isPositioned: boolean, notes?: string, patientParam?: Patient) => Promise<void>;
   selectAlgorithm: (algorithm: 'labetalol' | 'hydralazine' | 'nifedipine') => Promise<void>;
   orderMedication: (medicationName: string, dose: string, route: 'IV' | 'PO', waitTime: number) => Promise<void>;
+  giveNextDose: () => Promise<void>;
   administerMedication: (medicationId: string) => Promise<void>;
   resolveSession: () => Promise<void>;
   escalateSession: () => Promise<void>;
@@ -98,6 +99,9 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
   async function startEmergencySession(patientId: string): Promise<EmergencySession> {
     if (!user) throw new Error('User not authenticated');
 
+    // Deactivate all existing timers (including observation timer)
+    await TimerService.deactivateAllTimers(patientId);
+
     const { data, error } = await supabase
       .from(TABLES.EMERGENCY_SESSIONS)
       .insert({
@@ -126,8 +130,18 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     // Load patient data
     await loadPatientData(patientId);
     
+    // Get patient info for notifications
+    const patientData = await supabase
+      .from(TABLES.PATIENTS)
+      .select('room_number')
+      .eq('id', patientId)
+      .single();
+    
     // Create 30-60 min administration deadline timer per RWJ protocol
-    await TimerService.createAdministrationDeadlineTimer(patientId);
+    await TimerService.createAdministrationDeadlineTimer(
+      patientId,
+      patientData.data?.room_number
+    );
     
     return session;
   }
@@ -189,6 +203,15 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     const latestIsHigh = isBPHigh(systolic, diastolic);
     const previousIsHigh = previousReading ? isBPHigh(previousReading.systolic, previousReading.diastolic) : false;
 
+    // Check time interval between readings (for emergency confirmation)
+    let sufficientTimeGap = false;
+    if (previousReading) {
+      const previousTime = new Date(previousReading.timestamp);
+      const now = new Date();
+      const minutesSincePrevious = (now.getTime() - previousTime.getTime()) / (1000 * 60);
+      sufficientTimeGap = minutesSincePrevious >= 5; // Minimum 5 minutes between readings
+    }
+
     // Existing emergency session handling
     if (activeSession?.algorithm_selected) {
       const protocol = MEDICATION_PROTOCOLS[activeSession.algorithm_selected];
@@ -220,8 +243,8 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     // If no active session, manage first/second high workflow
     if (!activeSession) {
       if (latestIsHigh) {
-        if (previousIsHigh) {
-          // Confirmed emergency (second high reading)
+        if (previousIsHigh && sufficientTimeGap) {
+          // Confirmed emergency (second high reading with sufficient time gap)
           await TimerService.deactivateAllTimers(targetPatient.id);
           await startEmergencySession(targetPatient.id);
           await NotificationDispatcher.notifyConfirmedEmergency(
@@ -230,15 +253,35 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
             diastolic,
             targetPatient.room_number
           );
+        } else if (previousIsHigh && !sufficientTimeGap) {
+          // Second high BP too soon - keep observation timer active
+          // Log for audit but don't confirm emergency yet
+          await logAudit('bp_high_insufficient_time_gap', { 
+            systolic, 
+            diastolic, 
+            minutesSincePrevious: previousReading ? 
+              ((new Date().getTime() - new Date(previousReading.timestamp).getTime()) / (1000 * 60)).toFixed(1) : 
+              '0' 
+          });
         } else {
           // First high reading -> start silent recheck timer
           await TimerService.deactivateAllTimers(targetPatient.id);
-          await TimerService.createBPRecheckTimer(targetPatient.id);
+          const timer = await TimerService.createBPRecheckTimer(targetPatient.id, targetPatient.room_number);
+          setActiveTimer(timer);
           await NotificationDispatcher.notifyFirstHighBP(targetPatient.id, systolic, diastolic);
         }
-      } else if (isBPInTargetRange(systolic, diastolic)) {
-        // Normalize without an active session: clear any stray timers
+      } else {
+        // BP is not high (either in target range or borderline)
+        // Deactivate any observation timers - emergency threshold not met
         await TimerService.deactivateAllTimers(targetPatient.id);
+        
+        if (isBPInTargetRange(systolic, diastolic)) {
+          // In target range - fully normalized
+          await logAudit('bp_normalized', { systolic, diastolic });
+        } else {
+          // Borderline (not high, not in target) - keep monitoring but no active protocol
+          await logAudit('bp_borderline_recorded', { systolic, diastolic });
+        }
       }
     }
 
@@ -255,7 +298,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
   }
 
   async function selectAlgorithm(algorithm: 'labetalol' | 'hydralazine' | 'nifedipine') {
-    if (!activeSession) throw new Error('No active session');
+    if (!activeSession || !patient) throw new Error('No active session or patient');
 
     const { error } = await supabase
       .from(TABLES.EMERGENCY_SESSIONS)
@@ -263,6 +306,12 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       .eq('id', activeSession.id);
 
     if (error) throw error;
+
+    // Create administration deadline timer (45 minutes)
+    await TimerService.createAdministrationDeadlineTimer(patient.id, patient.room);
+
+    // Notify team about algorithm selection
+    await NotificationDispatcher.notifyAlgorithmSelected(patient, algorithm);
 
     await logAudit('algorithm_selected', { algorithm });
   }
@@ -307,6 +356,63 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       route, 
       waitTime,
       doseNumber: currentStep 
+    });
+  }
+
+  async function giveNextDose() {
+    if (!user || !activeSession || !patient) throw new Error('Missing required data');
+
+    const algorithm = activeSession.algorithm_selected;
+    if (!algorithm) throw new Error('Algorithm not selected');
+
+    const protocol = MEDICATION_PROTOCOLS[algorithm];
+    const stepIndex = activeSession.current_step || 0;
+    const nextDose = protocol.doses[stepIndex];
+
+    if (!nextDose) {
+      await logAudit('medication_protocol_complete', { algorithm });
+      return;
+    }
+
+    const doseNumber = stepIndex + 1;
+    const doseAmount = parseFloat(nextDose.dose) || 0;
+    const nowIso = new Date().toISOString();
+
+    const { error } = await supabase
+      .from(TABLES.MEDICATIONS)
+      .insert({
+        patient_id: patient.id,
+        emergency_session_id: activeSession.id,
+        medication_name: nextDose.medication,
+        algorithm,
+        route: nextDose.route,
+        dose_number: doseNumber,
+        dose_amount: doseAmount,
+        unit: 'mg',
+        ordered_by: user.id,
+        ordered_at: nowIso,
+        administered_by: user.id,
+        administered_at: nowIso,
+      });
+
+    if (error) throw error;
+
+    await supabase
+      .from(TABLES.EMERGENCY_SESSIONS)
+      .update({ current_step: doseNumber })
+      .eq('id', activeSession.id);
+
+    // Reset timers and start the medication wait timer
+    await TimerService.deactivateAllTimers(patient.id);
+    const timer = await TimerService.createMedicationWaitTimer(patient.id, nextDose.waitTime);
+    setActiveTimer(timer);
+
+    await logAudit('medication_given', {
+      medication: nextDose.medication,
+      dose: nextDose.dose,
+      route: nextDose.route,
+      doseNumber,
+      waitTime: nextDose.waitTime,
     });
   }
 
@@ -400,6 +506,9 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       .update({ updated_at: new Date().toISOString() })
       .eq('id', patient.id);
 
+    // Deactivate all timers and clear Live Activity when escalated
+    await TimerService.deactivateAllTimers(patient.id);
+
     await logAudit('session_escalated', {});
   }
 
@@ -481,6 +590,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
         recordBPReading,
         selectAlgorithm,
         orderMedication,
+        giveNextDose,
         administerMedication,
         resolveSession,
         escalateSession,

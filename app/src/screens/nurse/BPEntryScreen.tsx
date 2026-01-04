@@ -33,6 +33,7 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
   const [showGuide, setShowGuide] = useState(false);
   const [selectedGuide, setSelectedGuide] = useState<string | null>(null);
   const [bpHistory, setBpHistory] = useState<BloodPressureReading[]>([]);
+  const [bpHistoryWithUsers, setBpHistoryWithUsers] = useState<any[]>([]);
   const [activeTimer, setActiveTimer] = useState<any>(null);
   const [emergencySession, setEmergencySession] = useState<any>(null);
   const [checklist, setChecklist] = useState({
@@ -55,8 +56,18 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
   const loadBPHistory = async () => {
     if (!routePatient) return;
     try {
-      const history = await DatabaseService.getBPHistory(routePatient.id);
+      const history = await DatabaseService.getBPReadings(routePatient.id);
       setBpHistory(history.slice(0, 5)); // Show last 5 readings
+      
+      // Load user names for each BP reading
+      const historyWithUsers = await Promise.all(history.slice(0, 5).map(async (bp) => {
+        if (bp.recorded_by) {
+          const user = await DatabaseService.getUser(bp.recorded_by);
+          return { ...bp, recordedByName: user?.name || user?.email || 'Unknown' };
+        }
+        return { ...bp, recordedByName: 'Unknown' };
+      }));
+      setBpHistoryWithUsers(historyWithUsers);
     } catch (error) {
       console.error('Error loading BP history:', error);
     }
@@ -257,6 +268,31 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
     setLoading(true);
 
     try {
+      // Check if there's a recent reading (within 5 minutes)
+      if (bpHistory.length > 0 && isHigh) {
+        const lastReading = bpHistory[0];
+        const lastTime = new Date(lastReading.timestamp);
+        const now = new Date();
+        const minutesSinceLast = (now.getTime() - lastTime.getTime()) / (1000 * 60);
+        
+        if (minutesSinceLast < 5 && isBPHigh(lastReading.systolic, lastReading.diastolic)) {
+          showAlert(
+            'Time Interval Note',
+            `Last high BP was ${minutesSinceLast.toFixed(1)} minutes ago. Protocol requires at least 5 minutes between readings for emergency confirmation. This reading will be recorded but won't trigger emergency protocol yet.`,
+            async () => {
+              await recordBPReading(sys, dia, isChecklistComplete(), undefined, routePatient);
+              handleClear();
+              await new Promise(resolve => setTimeout(resolve, 300));
+              await loadBPHistory();
+              await loadTimerAndSession();
+              navigation.goBack();
+            }
+          );
+          setLoading(false);
+          return;
+        }
+      }
+
       await recordBPReading(sys, dia, isChecklistComplete(), undefined, routePatient);
 
       const isControlled = isBPInTargetRange(sys, dia);
@@ -382,10 +418,10 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
         </View>
 
         {/* Recent Readings Section */}
-        {bpHistory.length > 0 && (
+        {bpHistoryWithUsers.length > 0 && (
           <View style={styles.recentReadings}>
             <Text style={styles.sectionTitle}>Recent Readings</Text>
-            {bpHistory.map((reading, index) => (
+            {bpHistoryWithUsers.map((reading, index) => (
               <View key={index} style={styles.historyItem}>
                 <View style={styles.historyContent}>
                   <Text style={styles.historyBP}>
@@ -399,9 +435,16 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
                     })}
                   </Text>
                 </View>
-                {isBPHigh(reading.systolic, reading.diastolic) && (
-                  <Text style={styles.highIndicator}>HIGH</Text>
-                )}
+                <View style={styles.historyFooter}>
+                  {reading.recordedByName && (
+                    <Text style={styles.recordedBy}>by {reading.recordedByName}</Text>
+                  )}
+                  {isBPHigh(reading.systolic, reading.diastolic) && (
+                    <View style={styles.highIndicatorContainer}>
+                      <Text style={styles.highIndicator}>HIGH</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             ))}
           </View>
@@ -692,6 +735,11 @@ const styles = StyleSheet.create({
   historyContent: {
     flex: 1,
   },
+  historyFooter: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    marginTop: 4,
+  },
   historyBP: {
     fontSize: 16,
     fontWeight: '600',
@@ -702,6 +750,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#999',
   },
+  recordedBy: {
+    fontSize: 11,
+    color: '#666',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
   highIndicator: {
     fontSize: 11,
     fontWeight: 'bold',
@@ -710,6 +764,10 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     backgroundColor: '#ffe5e5',
     borderRadius: 4,
+  },
+  highIndicatorContainer: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
   },
   modalOverlay: {
     flex: 1,

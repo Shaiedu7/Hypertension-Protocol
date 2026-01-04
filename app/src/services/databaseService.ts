@@ -76,6 +76,12 @@ export class DatabaseService {
   }
 
   static async deletePatient(patientId: string): Promise<void> {
+    // Import dynamically to avoid circular dependency
+    const { LiveActivityService } = await import('./liveActivityService');
+    
+    // Clear Live Activity if active
+    await LiveActivityService.endCurrentActivity();
+    
     // Delete patient - cascading deletes will handle related records if configured
     // Otherwise we manually delete related records first
     const { error } = await supabase
@@ -301,5 +307,18 @@ export class DatabaseService {
 
     if (error) return [];
     return data as Timer[];
+  }
+
+  // ============= USERS =============
+
+  static async getUser(userId: string): Promise<{ id: string; name?: string; email?: string } | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, email')
+      .eq('id', userId)
+      .single();
+
+    if (error) return null;
+    return data;
   }
 }

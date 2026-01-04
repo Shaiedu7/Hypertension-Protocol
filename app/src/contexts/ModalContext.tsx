@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useEmergencySession } from './EmergencySessionContext';
 import { Timer, EmergencySession } from '../types';
+import { NotificationDispatcher } from '../services/notificationDispatcher';
 
 export interface ModalState {
   timerExpired: boolean;
@@ -32,7 +33,7 @@ export function useModals() {
 }
 
 export function ModalProvider({ children }: { children: React.ReactNode }) {
-  const { activeSession, activeTimer } = useEmergencySession();
+  const { activeSession, activeTimer, patient } = useEmergencySession();
   const [modals, setModals] = useState<ModalState>({
     timerExpired: false,
     timerExpiredData: null,
@@ -41,19 +42,36 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
     emergencyConfirmed: false,
     emergencyConfirmedData: null,
   });
+  const [notifiedTimers, setNotifiedTimers] = useState<Set<string>>(new Set());
 
-  // Monitor for timer expiration
+  // Monitor for timer expiration (polling so we don't miss the moment it crosses zero)
   useEffect(() => {
-    if (activeTimer) {
-      const now = new Date();
-      const expiresAt = new Date(activeTimer.expires_at);
-      
-      // Check if timer has expired
-      if (now >= expiresAt && activeTimer.is_active) {
-        showTimerExpiredModal(activeTimer);
+    const interval = setInterval(() => {
+      if (activeTimer && patient) {
+        const now = new Date();
+        const expiresAt = new Date(activeTimer.expires_at);
+        const startedAt = new Date(activeTimer.started_at);
+        
+        // Only check timers that have been running for at least their duration
+        // This prevents showing modal for old/superseded timers
+        const timerAge = (now.getTime() - startedAt.getTime()) / (1000 * 60);
+        const shouldExpire = timerAge >= activeTimer.duration_minutes;
+
+        if (now >= expiresAt && activeTimer.is_active && !notifiedTimers.has(activeTimer.id) && shouldExpire) {
+          NotificationDispatcher.notifyTimerExpired(
+            patient.id,
+            activeTimer.type as 'bp_recheck' | 'medication_wait',
+            patient.room_number
+          );
+
+          showTimerExpiredModal(activeTimer);
+          setNotifiedTimers(prev => new Set(prev).add(activeTimer.id));
+        }
       }
-    }
-  }, [activeTimer]);
+    }, 5000); // check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [activeTimer, patient, notifiedTimers]);
 
   // Monitor for escalation status changes
   useEffect(() => {

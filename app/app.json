@@ -14,15 +14,27 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.shumude.app"
+      "bundleIdentifier": "com.shumude.app",
+      "infoPlist": {
+        "NSSupportsLiveActivities": true
+      }
     },
+    "plugins": [
+      [
+        "expo-live-activity",
+        {
+          "frequentUpdates": true
+        }
+      ]
+    ],
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.shumude.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"

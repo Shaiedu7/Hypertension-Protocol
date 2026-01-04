@@ -24,14 +24,23 @@ export async function registerForPushNotifications(): Promise<string | null> {
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowCriticalAlerts: true, // For medical alerts
+        },
+      });
       finalStatus = status;
     }
 
     if (finalStatus !== 'granted') {
-      console.warn('Failed to get push token for push notification!');
+      console.warn('Push notification permission not granted. Status:', finalStatus);
       return null;
     }
+
+    console.log('Push notification permission granted');
 
     const token = (await Notifications.getExpoPushTokenAsync({
       projectId: '02cffa13-e2bd-48aa-a43b-277477f9df31',
@@ -69,10 +78,11 @@ export async function scheduleNotification(
   title: string,
   body: string,
   data: Record<string, any>,
-  priority: 'info' | 'warning' | 'critical' | 'stat' = 'info'
+  priority: 'info' | 'warning' | 'critical' | 'stat' = 'info',
+  trigger: Notifications.NotificationTriggerInput | null = null
 ) {
   try {
-    await Notifications.scheduleNotificationAsync({
+    const notificationId = await Notifications.scheduleNotificationAsync({
       content: {
         title,
         body,
@@ -80,10 +90,11 @@ export async function scheduleNotification(
         priority: priority === 'critical' || priority === 'stat' 
           ? Notifications.AndroidNotificationPriority.MAX 
           : Notifications.AndroidNotificationPriority.HIGH,
-        sound: priority === 'critical' || priority === 'stat' ? 'default' : false,
+        sound: 'default', // Always play sound for medical alerts
       },
-      trigger: null, // Trigger immediately
+      trigger, // null = immediate; or time-based when provided
     });
+    console.log(`Notification scheduled: ${notificationId}, trigger:`, trigger);
   } catch (error) {
     console.warn('Failed to schedule notification:', error);
     // Don't throw, just log - notifications are enhancement, not critical path

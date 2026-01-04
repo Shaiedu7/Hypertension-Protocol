@@ -43,8 +43,8 @@ export default function TimerExpiredModal() {
               <Text style={styles.actionTitle}>REQUIRED ACTION:</Text>
               <Text style={styles.actionText}>
                 {isRecheckTimer
-                  ? 'Check BP immediately and record reading'
-                  : 'Reassess patient and record new BP reading'}
+                  ? 'Take BP reading and report it in the system'
+                  : 'Reassess patient and report new BP reading'}
               </Text>
             </View>
 
@@ -61,14 +61,7 @@ export default function TimerExpiredModal() {
               style={styles.primaryButton}
               onPress={dismissTimerExpiredModal}
             >
-              <Text style={styles.primaryButtonText}>I've Checked BP</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={dismissTimerExpiredModal}
-            >
-              <Text style={styles.secondaryButtonText}>Dismiss</Text>
+              <Text style={styles.primaryButtonText}>Acknowledge</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
