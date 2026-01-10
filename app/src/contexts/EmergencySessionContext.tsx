@@ -404,7 +404,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
 
     // Reset timers and start the medication wait timer
     await TimerService.deactivateAllTimers(patient.id);
-    const timer = await TimerService.createMedicationWaitTimer(patient.id, nextDose.waitTime);
+    const timer = await TimerService.createMedicationWaitTimer(patient.id, nextDose.waitTime, patient.room_number);
     setActiveTimer(timer);
 
     await logAudit('medication_given', {
@@ -452,7 +452,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     if (error) throw error;
     
     // Create wait timer
-    await TimerService.createMedicationWaitTimer(patient.id, waitTime);
+    await TimerService.createMedicationWaitTimer(patient.id, waitTime, patient.room_number);
 
     await logAudit('medication_administered', { 
       medicationId, 

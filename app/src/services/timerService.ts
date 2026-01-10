@@ -97,7 +97,8 @@ export class TimerService {
    */
   static async createMedicationWaitTimer(
     patientId: string,
-    waitMinutes: number
+    waitMinutes: number,
+    patientRoom?: string
   ): Promise<Timer> {
     const expiresAt = new Date(Date.now() + waitMinutes * 60 * 1000);
 
@@ -122,6 +123,18 @@ export class TimerService {
       { patientId, type: 'medication_wait' },
       'critical',
       { type: 'timeInterval', seconds: waitMinutes * 60, repeats: false }
+    );
+
+    // Create database notification for nurse (they need to record next BP)
+    const { DatabaseService } = await import('./databaseService');
+    const location = patientRoom ? ` (Room ${patientRoom})` : '';
+    await DatabaseService.createNotification(
+      'critical',
+      'MEDICATION WAIT COMPLETE - BP CHECK REQUIRED',
+      `${waitMinutes}-minute wait period complete${location}. Record blood pressure now to assess medication response.`,
+      'nurse',
+      undefined,
+      patientId
     );
 
     return data as Timer;

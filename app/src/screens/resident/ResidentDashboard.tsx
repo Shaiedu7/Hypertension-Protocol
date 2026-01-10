@@ -11,7 +11,7 @@ import ActionButton from '../../components/ActionButton';
 import TimerCountdown from '../../components/TimerCountdown';
 import { MEDICATION_PROTOCOLS } from '../../utils/constants';
 
-export default function ResidentDashboard() {
+export default function ResidentDashboard({ navigation }: any) {
   const { user, signOut } = useAuth();
   const { 
     activeSession, 
@@ -19,7 +19,9 @@ export default function ResidentDashboard() {
     selectAlgorithm, 
     escalateSession,
     activeTimer,
-    focusSession
+    focusSession,
+    giveNextDose,
+    unsubscribeFromSession
   } = useEmergencySession();
   
   const [allEmergencies, setAllEmergencies] = useState<Array<{ patient: Patient; session: EmergencySession }>>([]);
@@ -79,11 +81,21 @@ export default function ResidentDashboard() {
   };
 
   const handleSelectAlgorithm = async (algorithm: MedicationAlgorithm) => {
-    if (selectedPatientSession) {
+    if (selectedPatientSession && patient) {
       await selectAlgorithm(algorithm);
       setShowAlgorithmModal(false);
       setSelectedPatientSession(null);
-      // Refresh data while keeping session focused
+      
+      // Give a moment for the database to update
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Reload the session to get the updated algorithm
+      const updatedSession = await DatabaseService.getEmergencySession(selectedPatientSession.id);
+      if (updatedSession) {
+        focusSession(updatedSession, patient);
+      }
+      
+      // Refresh data
       await loadPatientData();
       await loadAllEmergencies();
     }
@@ -96,6 +108,17 @@ export default function ResidentDashboard() {
     const nextDose = protocol.doses[activeSession.current_step];
     
     return nextDose;
+  };
+
+  const handleGiveNextDose = async () => {
+    if (!patient || !activeSession) return;
+    try {
+      await giveNextDose();
+      await loadPatientData();
+      await loadAllEmergencies();
+    } catch (error) {
+      console.error('Error giving dose:', error);
+    }
   };
 
   return (
@@ -121,7 +144,15 @@ export default function ResidentDashboard() {
         {/* Active Case Section */}
         {activeSession && patient ? (
           <View style={styles.activeCaseSection}>
-            <Text style={styles.sectionTitle}>🏥 Active Case</Text>
+            <View style={styles.sectionHeaderRow}>
+              <TouchableOpacity 
+                style={styles.backButton}
+                onPress={() => unsubscribeFromSession()}
+              >
+                <Text style={styles.backButtonText}>← All Patients</Text>
+              </TouchableOpacity>
+              <Text style={styles.sectionTitle}>🏥 Active Case</Text>
+            </View>
             
             {/* Goal BP Banner */}
             <View style={styles.goalBPBanner}>
@@ -168,7 +199,7 @@ export default function ResidentDashboard() {
                   </View>
                 )}
 
-                {/* Next Dose Info (read-only) */}
+                {/* Next Dose - Mark Given */}
                 {getNextDoseInfo() && (
                   <View style={styles.nextDoseCard}>
                     <Text style={styles.nextDoseTitle}>Next Dose</Text>
@@ -176,10 +207,24 @@ export default function ResidentDashboard() {
                       {getNextDoseInfo()?.medication} {getNextDoseInfo()?.dose} {getNextDoseInfo()?.route}
                     </Text>
                     <Text style={styles.nextDoseNote}>
-                      Nurse will administer and record; app tracks timing automatically.
+                      Tap after administering medication at bedside.
                     </Text>
+                    <ActionButton
+                      label="Mark Given"
+                      onPress={handleGiveNextDose}
+                      variant="primary"
+                    />
                   </View>
                 )}
+
+                {/* Record BP Button */}
+                <View style={styles.bpRecordSection}>
+                  <ActionButton
+                    label="Record Blood Pressure"
+                    onPress={() => navigation.navigate('BPEntry', { patient })}
+                    variant="primary"
+                  />
+                </View>
 
                 {/* BP History */}
                 <View style={styles.bpHistorySection}>
@@ -406,8 +451,23 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 16,
+  },  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  algorithmPrompt: {
+  backButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 6,
+  },
+  backButtonText: {
+    fontSize: 14,
+    color: '#007bff',
+    fontWeight: '600',
+  },  algorithmPrompt: {
     backgroundColor: '#fff3cd',
     padding: 20,
     borderRadius: 12,
@@ -540,6 +600,9 @@ const styles = StyleSheet.create({
   medStatus: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  bpRecordSection: {
+    marginVertical: 16,
   },
   emergenciesSection: {
     padding: 16,

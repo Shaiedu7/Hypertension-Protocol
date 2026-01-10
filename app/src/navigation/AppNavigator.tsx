@@ -34,7 +34,10 @@ export function AppNavigator() {
               </>
             )}
             {user.role === 'resident' && (
-              <Stack.Screen name="ResidentDashboard" component={ResidentDashboard} />
+              <>
+                <Stack.Screen name="ResidentDashboard" component={ResidentDashboard} />
+                <Stack.Screen name="BPEntry" component={BPEntryScreen} />
+              </>
             )}
             {user.role === 'attending' && (
               <Stack.Screen name="AttendingDashboard" component={AttendingDashboard} />

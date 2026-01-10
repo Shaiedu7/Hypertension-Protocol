@@ -44,6 +44,18 @@ export default function NurseDashboard({ navigation }: any) {
     }
   }, [patient, medications]);
 
+  // Auto-focus on single active emergency
+  useEffect(() => {
+    if (Object.keys(patientSessions).length === 1 && !activeSession) {
+      const patientId = Object.keys(patientSessions)[0];
+      const patient = allPatients.find(p => p.id === patientId);
+      const session = patientSessions[patientId];
+      if (patient && session) {
+        focusSession(session, patient);
+      }
+    }
+  }, [patientSessions, activeSession, allPatients, focusSession]);
+
   const loadPatients = async () => {
     const patients = await DatabaseService.getAllActivePatients();
     
@@ -126,12 +138,9 @@ export default function NurseDashboard({ navigation }: any) {
     return protocol.doses[session.current_step];
   };
 
-  const handleSelectAlgorithm = async (algorithm: 'labetalol' | 'hydralazine' | 'nifedipine') => {
-    if (!selectedSessionData) return;
-    focusSession(selectedSessionData.session, selectedSessionData.patient);
+  const handleSelectAlgorithm = async (algorithm: 'labetalol' | 'hydralazine' | 'nifedipine', session: any, p: Patient) => {
+    focusSession(session, p);
     await selectAlgorithm(algorithm);
-    setShowAlgorithmModal(false);
-    setSelectedSessionData(null);
     await loadPatients();
   };
 
@@ -253,15 +262,33 @@ export default function NurseDashboard({ navigation }: any) {
                   )}
 
                   {!session.algorithm_selected && (
-                    <TouchableOpacity
-                      style={styles.selectAlgoButton}
-                      onPress={() => {
-                        setSelectedSessionData({ session, patient: p });
-                        setShowAlgorithmModal(true);
-                      }}
-                    >
-                      <Text style={styles.selectAlgoText}>Select Algorithm</Text>
-                    </TouchableOpacity>
+                    <View style={styles.algorithmInline}>
+                      <Text style={styles.algorithmInlineLabel}>Select Algorithm:</Text>
+                      <View style={styles.algorithmButtonsRow}>
+                        <TouchableOpacity
+                          style={[styles.inlineAlgoBtn, p.has_asthma && styles.inlineAlgoBtnDisabled]}
+                          onPress={() => !p.has_asthma && handleSelectAlgorithm('labetalol', session, p)}
+                          disabled={p.has_asthma}
+                        >
+                          <Text style={styles.inlineAlgoBtnText}>Labetalol</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.inlineAlgoBtn}
+                          onPress={() => handleSelectAlgorithm('hydralazine', session, p)}
+                        >
+                          <Text style={styles.inlineAlgoBtnText}>Hydralazine</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.inlineAlgoBtn}
+                          onPress={() => handleSelectAlgorithm('nifedipine', session, p)}
+                        >
+                          <Text style={styles.inlineAlgoBtnText}>Nifedipine</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {p.has_asthma && (
+                        <Text style={styles.asthmaWarningInline}>⚠️ Labetalol contraindicated with asthma</Text>
+                      )}
+                    </View>
                   )}
 
                   {session.algorithm_selected && getNextDose(session) && (
@@ -319,62 +346,6 @@ export default function NurseDashboard({ navigation }: any) {
         )}
       </View>
     </ScrollView>
-
-    {/* Algorithm Selection Modal (Nurse) */}
-    <Modal
-      visible={showAlgorithmModal}
-      animationType="slide"
-      transparent
-      onRequestClose={() => setShowAlgorithmModal(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Select Treatment Algorithm</Text>
-
-          {selectedSessionData?.patient.has_asthma && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>⚠️ PATIENT HAS ASTHMA</Text>
-              <Text style={styles.warningSubtext}>Labetalol is contraindicated</Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={[styles.algorithmButton, selectedSessionData?.patient.has_asthma && styles.contraindicated]}
-            onPress={() => !selectedSessionData?.patient.has_asthma && handleSelectAlgorithm('labetalol')}
-            disabled={selectedSessionData?.patient.has_asthma}
-          >
-            <Text style={styles.algorithmButtonTitle}>Labetalol IV</Text>
-            <Text style={styles.algorithmButtonDesc}>20mg → 40mg → 80mg</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.algorithmButton}
-            onPress={() => handleSelectAlgorithm('hydralazine')}
-          >
-            <Text style={styles.algorithmButtonTitle}>Hydralazine IV</Text>
-            <Text style={styles.algorithmButtonDesc}>5-10mg → 10mg → 10mg</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.algorithmButton}
-            onPress={() => handleSelectAlgorithm('nifedipine')}
-          >
-            <Text style={styles.algorithmButtonTitle}>Nifedipine PO</Text>
-            <Text style={styles.algorithmButtonDesc}>10mg → 20mg → 20mg</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={() => {
-              setShowAlgorithmModal(false);
-              setSelectedSessionData(null);
-            }}
-          >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
 
     {/* Add Patient Modal */}
     <Modal
@@ -596,6 +567,46 @@ const styles = StyleSheet.create({
   },
   emergencyTimerCompact: {
     marginTop: 4,
+  },
+  algorithmInline: {
+    marginTop: 10,
+    backgroundColor: '#e3f2fd',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2196f3',
+  },
+  algorithmInlineLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1565c0',
+    marginBottom: 8,
+  },
+  algorithmButtonsRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 6,
+  },
+  inlineAlgoBtn: {
+    flex: 1,
+    backgroundColor: '#2196f3',
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  inlineAlgoBtnDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.5,
+  },
+  inlineAlgoBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 11,
+  },
+  asthmaWarningInline: {
+    fontSize: 11,
+    color: '#d32f2f',
+    fontWeight: '600',
   },
   selectAlgoButton: {
     marginTop: 8,
