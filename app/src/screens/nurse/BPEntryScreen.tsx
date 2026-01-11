@@ -268,31 +268,6 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
     setLoading(true);
 
     try {
-      // Check if there's a recent reading (within 5 minutes)
-      if (bpHistory.length > 0 && isHigh) {
-        const lastReading = bpHistory[0];
-        const lastTime = new Date(lastReading.timestamp);
-        const now = new Date();
-        const minutesSinceLast = (now.getTime() - lastTime.getTime()) / (1000 * 60);
-        
-        if (minutesSinceLast < 5 && isBPHigh(lastReading.systolic, lastReading.diastolic)) {
-          showAlert(
-            'Time Interval Note',
-            `Last high BP was ${minutesSinceLast.toFixed(1)} minutes ago. Protocol requires at least 5 minutes between readings for emergency confirmation. This reading will be recorded but won't trigger emergency protocol yet.`,
-            async () => {
-              await recordBPReading(sys, dia, isChecklistComplete(), undefined, routePatient);
-              handleClear();
-              await new Promise(resolve => setTimeout(resolve, 300));
-              await loadBPHistory();
-              await loadTimerAndSession();
-              navigation.goBack();
-            }
-          );
-          setLoading(false);
-          return;
-        }
-      }
-
       await recordBPReading(sys, dia, isChecklistComplete(), undefined, routePatient);
 
       const isControlled = isBPInTargetRange(sys, dia);

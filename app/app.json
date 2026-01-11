@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "RWJ HP",
-    "slug": "rwj-hp",
+    "slug": "app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,10 +14,13 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.shumude.app",
+      "bundleIdentifier": "com.rwjbarnabas.hypertension-protocol",
       "infoPlist": {
-        "NSSupportsLiveActivities": true
-      }
+        "NSSupportsLiveActivities": true,
+        "NSSupportsLiveActivitiesFrequentUpdates": false,
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {}
     },
     "plugins": [
       [
@@ -34,7 +37,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.shumude.app"
+      "package": "com.rwjbarnabas.hypertensionprotocol"
     },
     "web": {
       "favicon": "./assets/favicon.png"

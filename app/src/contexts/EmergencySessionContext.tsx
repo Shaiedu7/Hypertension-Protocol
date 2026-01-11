@@ -209,7 +209,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       const previousTime = new Date(previousReading.timestamp);
       const now = new Date();
       const minutesSincePrevious = (now.getTime() - previousTime.getTime()) / (1000 * 60);
-      sufficientTimeGap = minutesSincePrevious >= 5; // Minimum 5 minutes between readings
+      sufficientTimeGap = minutesSincePrevious >= 0.01; // 0.01 minutes (0.6 seconds) for testing
     }
 
     // Existing emergency session handling

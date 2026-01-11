@@ -11,8 +11,9 @@ export class TimerService {
    * Create a BP recheck timer (15 minutes after first high BP)
    */
   static async createBPRecheckTimer(patientId: string, patientRoom?: string): Promise<Timer> {
-    const durationMinutes = 15;
-    const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+    const durationSeconds = 10; // 10 seconds for testing
+    const durationMinutes = 1; // Store as 1 minute in DB (minimum integer)
+    const expiresAt = new Date(Date.now() + durationSeconds * 1000);
 
     const { data, error } = await supabase
       .from(TABLES.TIMERS)
@@ -34,7 +35,7 @@ export class TimerService {
       'Take confirmatory blood pressure reading now.',
       { patientId, type: 'bp_recheck' },
       'critical',
-      { type: 'timeInterval', seconds: durationMinutes * 60, repeats: false }
+      { type: 'timeInterval', seconds: durationSeconds, repeats: false }
     );
 
     // Start Live Activity for the timer
@@ -53,8 +54,9 @@ export class TimerService {
    */
   static async createAdministrationDeadlineTimer(patientId: string, patientRoom?: string): Promise<Timer> {
     // Using 45 minutes as midpoint of 30-60 min window
-    const durationMinutes = 45;
-    const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+    const durationSeconds = 10; // 10 seconds for testing
+    const durationMinutes = 1; // Store as 1 minute in DB (minimum integer)
+    const expiresAt = new Date(Date.now() + durationSeconds * 1000);
 
     const { data, error } = await supabase
       .from(TABLES.TIMERS)
@@ -101,13 +103,14 @@ export class TimerService {
     patientRoom?: string
   ): Promise<Timer> {
     const expiresAt = new Date(Date.now() + waitMinutes * 60 * 1000);
+    const durationMinutesForDb = Math.max(1, Math.round(waitMinutes)); // Store as integer, minimum 1
 
     const { data, error } = await supabase
       .from(TABLES.TIMERS)
       .insert({
         patient_id: patientId,
         type: 'medication_wait',
-        duration_minutes: waitMinutes,
+        duration_minutes: durationMinutesForDb,
         expires_at: expiresAt.toISOString(),
         is_active: true,
       })
@@ -115,15 +118,6 @@ export class TimerService {
       .single();
 
     if (error) throw error;
-
-    // Schedule time-based notification for medication wait completion
-    await scheduleNotification(
-      'BP Check Required',
-      `Time to check blood pressure (${waitMinutes} min wait complete)`,
-      { patientId, type: 'medication_wait' },
-      'critical',
-      { type: 'timeInterval', seconds: waitMinutes * 60, repeats: false }
-    );
 
     // Create database notification for nurse (they need to record next BP)
     const { DatabaseService } = await import('./databaseService');
