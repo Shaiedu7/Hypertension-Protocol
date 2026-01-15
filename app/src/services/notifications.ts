@@ -1,72 +1,106 @@
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-// Configure notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const priority = notification.request.content.data?.priority;
-    
-    return {
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: priority === 'critical' || priority === 'stat',
-      shouldSetBadge: true,
-    };
-  },
-});
+const isExpoGo = Constants.appOwnership === 'expo';
+
+console.log('[Notifications] Running in Expo Go:', isExpoGo);
+
+// Completely avoid loading expo-notifications in Expo Go
+let Notifications: any = null;
+let handlerConfigured = false;
+
+function getNotifications(): any {
+  if (isExpoGo) {
+    console.log('[Notifications] Skipping - Expo Go detected');
+    return null;
+  }
+  if (Notifications) return Notifications;
+  
+  try {
+    // Use require instead of dynamic import to avoid Metro bundling issues
+    Notifications = require('expo-notifications');
+    console.log('[Notifications] Module loaded successfully');
+    return Notifications;
+  } catch (e) {
+    console.warn('[Notifications] Failed to load expo-notifications:', e);
+    return null;
+  }
+}
+
+function configureHandler() {
+  if (isExpoGo || handlerConfigured) return;
+  const notifications = getNotifications();
+  if (!notifications) return;
+  
+  try {
+    notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+    handlerConfigured = true;
+  } catch (e) {
+    console.warn('[Notifications] Failed to configure handler:', e);
+  }
+}
 
 /**
  * Request permissions for push notifications
  */
 export async function registerForPushNotifications(): Promise<string | null> {
+  // Expo Go cannot do remote push; skip entirely
+  if (isExpoGo) {
+    console.log('[Notifications] Expo Go detected; skipping push registration.');
+    return null;
+  }
+
   try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    configureHandler();
+    const notifications = getNotifications();
+    if (!notifications) return null;
+
+    const { status: existingStatus } = await notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowBadge: true,
-          allowSound: true,
-          allowCriticalAlerts: true, // For medical alerts
-        },
-      });
+      const { status } = await notifications.requestPermissionsAsync();
       finalStatus = status;
     }
 
     if (finalStatus !== 'granted') {
-      console.warn('Push notification permission not granted. Status:', finalStatus);
+      console.warn('[Notifications] Permission not granted:', finalStatus);
       return null;
     }
 
-    console.log('Push notification permission granted');
+    console.log('[Notifications] Permission granted');
 
-    const token = (await Notifications.getExpoPushTokenAsync({
+    const token = (await notifications.getExpoPushTokenAsync({
       projectId: '02cffa13-e2bd-48aa-a43b-277477f9df31',
     })).data;
-    console.log('Push token:', token);
+    console.log('[Notifications] Push token:', token);
 
-    // Android specific configuration
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('critical', {
-        name: 'Critical Alerts',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        sound: 'default',
-        enableVibrate: true,
-      });
-
-      await Notifications.setNotificationChannelAsync('high-priority', {
-        name: 'High Priority',
-        importance: Notifications.AndroidImportance.HIGH,
-        sound: 'default',
-      });
+    // Android channels - only in production builds
+    if (Platform.OS === 'android' && !__DEV__) {
+      try {
+        await notifications.setNotificationChannelAsync('critical', {
+          name: 'Critical Alerts',
+          importance: notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+        });
+        await notifications.setNotificationChannelAsync('high-priority', {
+          name: 'High Priority',
+          importance: notifications.AndroidImportance.HIGH,
+        });
+      } catch (e) {
+        console.warn('[Notifications] Failed to set channels:', e);
+      }
     }
 
     return token;
   } catch (error) {
-    console.error('Error registering for push notifications:', error);
+    console.error('[Notifications] Registration error:', error);
     return null;
   }
 }
@@ -79,25 +113,27 @@ export async function scheduleNotification(
   body: string,
   data: Record<string, any>,
   priority: 'info' | 'warning' | 'critical' | 'stat' = 'info',
-  trigger: Notifications.NotificationTriggerInput | null = null
+  trigger: any = null
 ) {
+  if (isExpoGo) return;
+
   try {
-    const notificationId = await Notifications.scheduleNotificationAsync({
+    configureHandler();
+    const notifications = getNotifications();
+    if (!notifications) return;
+
+    const notificationId = await notifications.scheduleNotificationAsync({
       content: {
         title,
         body,
         data: { ...data, priority },
-        priority: priority === 'critical' || priority === 'stat' 
-          ? Notifications.AndroidNotificationPriority.MAX 
-          : Notifications.AndroidNotificationPriority.HIGH,
-        sound: 'default', // Always play sound for medical alerts
+        sound: true,
       },
-      trigger, // null = immediate; or time-based when provided
+      trigger,
     });
-    console.log(`Notification scheduled: ${notificationId}, trigger:`, trigger);
+    console.log(`[Notifications] Scheduled: ${notificationId}`);
   } catch (error) {
-    console.warn('Failed to schedule notification:', error);
-    // Don't throw, just log - notifications are enhancement, not critical path
+    console.warn('[Notifications] Schedule failed:', error);
   }
 }
 
@@ -105,21 +141,42 @@ export async function scheduleNotification(
  * Cancel all scheduled notifications
  */
 export async function cancelAllNotifications() {
-  await Notifications.cancelAllScheduledNotificationsAsync();
+  if (isExpoGo) return;
+
+  try {
+    const notifications = getNotifications();
+    if (!notifications) return;
+    await notifications.cancelAllScheduledNotificationsAsync();
+  } catch (e) {
+    console.warn('[Notifications] Cancel failed:', e);
+  }
 }
 
 /**
  * Set up notification listeners
  */
-export function setupNotificationListeners(
-  onNotificationReceived: (notification: Notifications.Notification) => void,
-  onNotificationResponse: (response: Notifications.NotificationResponse) => void
-) {
-  const receivedSubscription = Notifications.addNotificationReceivedListener(onNotificationReceived);
-  const responseSubscription = Notifications.addNotificationResponseReceivedListener(onNotificationResponse);
+export async function setupNotificationListeners(
+  onNotificationReceived: (notification: any) => void,
+  onNotificationResponse: (response: any) => void
+): Promise<() => void> {
+  if (isExpoGo) {
+    return () => {};
+  }
 
-  return () => {
-    receivedSubscription.remove();
-    responseSubscription.remove();
-  };
+  try {
+    configureHandler();
+    const notifications = getNotifications();
+    if (!notifications) return () => {};
+
+    const receivedSub = notifications.addNotificationReceivedListener(onNotificationReceived);
+    const responseSub = notifications.addNotificationResponseReceivedListener(onNotificationResponse);
+
+    return () => {
+      receivedSub.remove();
+      responseSub.remove();
+    };
+  } catch (e) {
+    console.warn('[Notifications] Listener setup failed:', e);
+    return () => {};
+  }
 }

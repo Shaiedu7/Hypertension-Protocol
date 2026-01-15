@@ -40,7 +40,10 @@ export function AppNavigator() {
               </>
             )}
             {user.role === 'attending' && (
-              <Stack.Screen name="AttendingDashboard" component={AttendingDashboard} />
+              <>
+                <Stack.Screen name="AttendingDashboard" component={AttendingDashboard} />
+                <Stack.Screen name="BPEntry" component={BPEntryScreen} />
+              </>
             )}
             {user.role === 'chargeNurse' && (
               <>

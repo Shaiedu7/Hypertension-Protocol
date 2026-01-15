@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, M
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
 import { DatabaseService } from '../../services/databaseService';
+import { subscribeToDashboardUpdates } from '../../services/realtimeService';
 import { Patient, EmergencySession, MedicationDose, MedicationAlgorithm } from '../../types';
 import { useEmergencySession } from '../../contexts/EmergencySessionContext';
 import PatientCard from '../../components/PatientCard';
@@ -40,6 +41,15 @@ export default function ResidentDashboard({ navigation }: any) {
       loadPatientData();
     }
   }, [patient, activeSession]);
+
+  useEffect(() => {
+    const subscription = subscribeToDashboardUpdates(() => {
+      loadAllEmergencies();
+      loadPatientData();
+    });
+
+    return () => subscription.unsubscribe();
+  }, [patient?.id, activeSession?.id]);
 
   const loadAllEmergencies = async () => {
     try {
@@ -259,7 +269,11 @@ export default function ResidentDashboard({ navigation }: any) {
                 {/* Escalate Button */}
                 <ActionButton
                   label="Escalate to Attending"
-                  onPress={() => escalateSession()}
+                  onPress={async () => {
+                    await escalateSession();
+                    unsubscribeFromSession();
+                    await loadAllEmergencies();
+                  }}
                   variant="danger"
                 />
               </View>

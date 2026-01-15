@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useEmergencySession } from '../../contexts/EmergencySessionContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { DatabaseService } from '../../services/databaseService';
+import { subscribeToDashboardUpdates } from '../../services/realtimeService';
 import { Patient, MedicationDose } from '../../types';
 import { MEDICATION_PROTOCOLS } from '../../utils/constants';
 import TimerCountdown from '../../components/TimerCountdown';
@@ -43,6 +44,15 @@ export default function NurseDashboard({ navigation }: any) {
       loadPendingMedications();
     }
   }, [patient, medications]);
+
+  useEffect(() => {
+    const subscription = subscribeToDashboardUpdates(() => {
+      loadPatients();
+      loadPendingMedications();
+    });
+
+    return () => subscription.unsubscribe();
+  }, [patient?.id]);
 
   // Auto-focus on single active emergency
   useEffect(() => {

@@ -73,12 +73,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, [activeTimer, patient, notifiedTimers]);
 
-  // Monitor for escalation status changes
-  useEffect(() => {
-    if (activeSession?.status === 'escalated' && !modals.escalation) {
-      showEscalationModal(activeSession);
-    }
-  }, [activeSession?.status]);
+  // Escalation modal removed - visual badge on cards is sufficient
 
   // Monitor for emergency confirmation (2 high BPs)
   useEffect(() => {

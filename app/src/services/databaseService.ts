@@ -151,7 +151,7 @@ export class DatabaseService {
     const { data, error } = await supabase
       .from(TABLES.EMERGENCY_SESSIONS)
       .select('*')
-      .eq('status', 'active')
+      .in('status', ['active', 'escalated']) // include escalated so attending sees STAT cases
       .order('initiated_at', { ascending: false });
 
     if (error) return [];

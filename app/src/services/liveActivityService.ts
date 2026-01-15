@@ -1,5 +1,26 @@
-import { startActivity, stopActivity, updateActivity } from 'expo-live-activity';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Lazy-loaded expo-live-activity functions
+let liveActivityModule: any = null;
+let loadAttempted = false;
+
+async function getLiveActivityModule(): Promise<any> {
+  if (isExpoGo) return null;
+  if (loadAttempted) return liveActivityModule;
+  
+  loadAttempted = true;
+  try {
+    liveActivityModule = await import('expo-live-activity');
+    console.log('[LiveActivity] Module loaded successfully');
+    return liveActivityModule;
+  } catch (e) {
+    console.log('[LiveActivity] Native module not available (Expo Go mode)');
+    return null;
+  }
+}
 
 export interface LiveActivityTimerData {
   timerType: 'bp_recheck' | 'medication_wait' | 'administration_deadline';
@@ -16,8 +37,9 @@ export class LiveActivityService {
    * Check if Live Activities are available on this device
    */
   static async isAvailable(): Promise<boolean> {
-    // Live Activities are only available on iOS 16.1+
-    return Platform.OS === 'ios';
+    if (isExpoGo || Platform.OS !== 'ios') return false;
+    const mod = await getLiveActivityModule();
+    return mod !== null;
   }
 
   /**
@@ -29,9 +51,12 @@ export class LiveActivityService {
     try {
       const available = await this.isAvailable();
       if (!available) {
-        console.log('Live Activities not available (iOS only)');
+        console.log('[LiveActivity] Not available');
         return null;
       }
+
+      const mod = await getLiveActivityModule();
+      if (!mod) return null;
 
       // End any existing activity first
       if (this.currentActivityId) {
@@ -53,11 +78,11 @@ export class LiveActivityService {
         isMilliseconds: true
       });
 
-      const activityId = startActivity(
+      const activityId = mod.startActivity(
         {
           title: `Room ${timerData.patientRoom || 'Patient'}`,
           subtitle: timerLabel,
-          date: expiresTimestamp, // Pass date for native timer
+          date: expiresTimestamp,
           progressBar: {
             date: expiresTimestamp,
           },
@@ -75,13 +100,13 @@ export class LiveActivityService {
       if (activityId) {
         this.currentActivityId = activityId;
         this.currentTimerData = timerData;
-        console.log('Live Activity started:', activityId);
+        console.log('[LiveActivity] Started:', activityId);
         return activityId;
       }
 
       return null;
     } catch (error) {
-      console.error('Failed to start Live Activity:', error);
+      console.error('[LiveActivity] Start failed:', error);
       return null;
     }
   }
@@ -93,15 +118,22 @@ export class LiveActivityService {
     if (!this.currentActivityId) return;
 
     try {
-      stopActivity(this.currentActivityId, {
+      const mod = await getLiveActivityModule();
+      if (!mod) {
+        this.currentActivityId = null;
+        this.currentTimerData = null;
+        return;
+      }
+
+      mod.stopActivity(this.currentActivityId, {
         title: 'Timer Complete',
         subtitle: 'Check blood pressure now',
       });
-      console.log('Live Activity ended:', this.currentActivityId);
+      console.log('[LiveActivity] Ended:', this.currentActivityId);
       this.currentActivityId = null;
       this.currentTimerData = null;
     } catch (error) {
-      console.error('Failed to end Live Activity:', error);
+      console.error('[LiveActivity] End failed:', error);
     }
   }
 
@@ -112,22 +144,23 @@ export class LiveActivityService {
     timerData: LiveActivityTimerData
   ): Promise<void> {
     if (!this.currentActivityId) {
-      // If no activity exists, start a new one
       await this.startTimerActivity(timerData);
       return;
     }
 
     try {
+      const mod = await getLiveActivityModule();
+      if (!mod) return;
+
       const timerLabel = timerData.timerType === 'bp_recheck' 
         ? 'BP Recheck Timer' 
         : timerData.timerType === 'medication_wait'
         ? 'Medication Wait'
         : 'Administration Deadline';
 
-      // Use milliseconds for Expo Live Activity
       const expiresTimestamp = new Date(timerData.expiresAt).getTime();
 
-      updateActivity(this.currentActivityId, {
+      mod.updateActivity(this.currentActivityId, {
         title: `Room ${timerData.patientRoom || 'Patient'}`,
         subtitle: timerLabel,
         date: expiresTimestamp,
@@ -136,7 +169,7 @@ export class LiveActivityService {
         },
       } as any);
     } catch (error) {
-      console.error('Failed to update Live Activity:', error);
+      console.error('[LiveActivity] Update failed:', error);
     }
   }
 }

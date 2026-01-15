@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
 import { DatabaseService } from '../../services/databaseService';
+import { subscribeToDashboardUpdates } from '../../services/realtimeService';
 import { Patient, EmergencySession, Timer } from '../../types';
 import PatientCard from '../../components/PatientCard';
 import TimerCountdown from '../../components/TimerCountdown';
@@ -22,10 +23,9 @@ export default function ChargeNurseDashboard({ navigation }: any) {
 
   useEffect(() => {
     loadAllEmergencies();
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(loadAllEmergencies, 30000);
-    return () => clearInterval(interval);
+
+    const subscription = subscribeToDashboardUpdates(loadAllEmergencies);
+    return () => subscription.unsubscribe();
   }, []);
 
   const loadAllEmergencies = async () => {

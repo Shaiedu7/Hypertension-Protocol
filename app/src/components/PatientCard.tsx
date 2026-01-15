@@ -32,17 +32,13 @@ export default function PatientCard({
 
   // Priority levels: CRITICAL > HIGH > MEDIUM > NORMAL
   let urgencyLevel = 'normal';
-  let urgencyLabel = '';
   
   if (isEscalated) {
     urgencyLevel = 'critical';
-    urgencyLabel = 'CRITICAL';
   } else if (isHighBP || timerUrgent) {
     urgencyLevel = 'high';
-    urgencyLabel = 'URGENT';
   } else if (hasEmergency || isSevereBP) {
     urgencyLevel = 'medium';
-    urgencyLabel = 'ACTIVE';
   }
 
   const containerStyle = [
@@ -60,31 +56,13 @@ export default function PatientCard({
       activeOpacity={onPress ? 0.7 : 1}
     >
       <View style={styles.header}>
-        <View>
-          {patient.room_number ? (
-            <>
-              <Text style={styles.identifier}>
-                Room {patient.room_number}
-              </Text>
-              <Text style={styles.secondaryIdentifier}>
-                ID: {patient.anonymous_identifier}
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.identifier}>
-              ID: {patient.anonymous_identifier}
-            </Text>
-          )}
-        </View>
+        <Text style={styles.identifier}>
+          {patient.room_number ? `Room ${patient.room_number} • ` : ''}ID {patient.anonymous_identifier}
+        </Text>
 
-        {urgencyLabel && (
-          <View style={[
-            styles.urgencyBadge,
-            urgencyLevel === 'critical' && styles.urgencyBadgeCritical,
-            urgencyLevel === 'high' && styles.urgencyBadgeHigh,
-            urgencyLevel === 'medium' && styles.urgencyBadgeMedium,
-          ]}>
-            <Text style={styles.urgencyBadgeText}>{urgencyLabel}</Text>
+        {patient.has_asthma && (
+          <View style={styles.warningContainer}>
+            <Text style={styles.warningText}>⚠️ Asthma</Text>
           </View>
         )}
       </View>
@@ -111,16 +89,12 @@ export default function PatientCard({
 
       {showDetails && emergencySession && (
         <View style={styles.details}>
-          {emergencySession.algorithm_selected && (
-            <Text style={styles.detailText}>
-              Protocol: {emergencySession.algorithm_selected}
-            </Text>
-          )}
-          {emergencySession.current_step > 0 && (
-            <Text style={styles.detailText}>
-              Step {emergencySession.current_step}
-            </Text>
-          )}
+          <Text style={styles.detailText}>
+            {emergencySession.algorithm_selected
+              ? `${emergencySession.algorithm_selected.toUpperCase()} Protocol`
+              : 'Protocol pending'}
+            {emergencySession.current_step > 0 ? ` • Step ${emergencySession.current_step}` : ''}
+          </Text>
         </View>
       )}
 
@@ -130,11 +104,6 @@ export default function PatientCard({
         </View>
       )}
 
-      {patient.has_asthma && (
-        <View style={styles.warningContainer}>
-          <Text style={styles.warningText}>⚠️ Asthma</Text>
-        </View>
-      )}
     </TouchableOpacity>
   );
 }
@@ -142,11 +111,11 @@ export default function PatientCard({
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 2,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
     borderColor: '#e0e0e0',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   containerMedium: {
     borderColor: '#ffc107',
@@ -163,55 +132,31 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
+    alignItems: 'center',
+    marginBottom: 6,
   },
   identifier: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#333',
-  },
-  secondaryIdentifier: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 1,
-  },
-  urgencyBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-  },
-  urgencyBadgeMedium: {
-    backgroundColor: '#ffc107',
-  },
-  urgencyBadgeHigh: {
-    backgroundColor: '#ff9800',
-  },
-  urgencyBadgeCritical: {
-    backgroundColor: '#dc3545',
-  },
-  urgencyBadgeText: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#fff',
   },
   bpContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   bpLabel: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
   },
   bpTime: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#999',
     marginTop: 2,
   },
   bpValue: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
   },
@@ -219,29 +164,30 @@ const styles = StyleSheet.create({
     color: '#dc3545',
   },
   details: {
-    marginTop: 8,
-    paddingTop: 8,
+    marginTop: 6,
+    paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
   },
   detailText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  timerSection: {
-    marginTop: 8,
+    fontSize: 13,
+    color: '#555',
   },
   warningContainer: {
-    marginTop: 6,
-    padding: 4,
-    backgroundColor: '#fff3cd',
-    borderRadius: 4,
-    alignSelf: 'flex-start',
+    backgroundColor: '#ffe08a',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e0a800',
+    alignSelf: 'center',
   },
   warningText: {
     fontSize: 12,
-    color: '#856404',
-    fontWeight: '500',
+    color: '#7a4b00',
+    fontWeight: '700',
+  },
+  timerSection: {
+    marginTop: 6,
   },
 });

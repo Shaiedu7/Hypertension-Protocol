@@ -214,6 +214,33 @@ export class NotificationDispatcher {
   }
 
   /**
+   * Notify team when attending acknowledges transfer of care
+   */
+  static async notifyTransferAcknowledged(patientId: string, patientRoom?: string): Promise<void> {
+    const location = patientRoom ? ` (Room ${patientRoom})` : '';
+
+    // Notify charge nurse
+    await DatabaseService.createNotification(
+      'info',
+      'ATTENDING ACKNOWLEDGED TRANSFER',
+      `Attending has reviewed and acknowledged transfer of care${location}. Continue monitoring and await orders.`,
+      'chargeNurse',
+      undefined,
+      patientId
+    );
+
+    // Notify primary nurse
+    await DatabaseService.createNotification(
+      'info',
+      'ATTENDING ASSUMED CARE',
+      `Attending physician has acknowledged care${location}. Follow attending orders.`,
+      'nurse',
+      undefined,
+      patientId
+    );
+  }
+
+  /**
    * Dispatch notification when algorithm is selected
    */
   static async notifyAlgorithmSelected(

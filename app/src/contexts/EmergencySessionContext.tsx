@@ -23,6 +23,7 @@ interface EmergencySessionContextType {
   orderMedication: (medicationName: string, dose: string, route: 'IV' | 'PO', waitTime: number) => Promise<void>;
   giveNextDose: () => Promise<void>;
   administerMedication: (medicationId: string) => Promise<void>;
+  acknowledgeSession: () => Promise<void>;
   resolveSession: () => Promise<void>;
   escalateSession: () => Promise<void>;
   subscribeToSession: (sessionId: string) => void;
@@ -487,6 +488,28 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     setActiveSession(null);
   }
 
+  async function acknowledgeSession() {
+    if (!activeSession || !patient || !user) throw new Error('No active session or user');
+
+    const { error } = await supabase
+      .from(TABLES.EMERGENCY_SESSIONS)
+      .update({
+        acknowledged_at: new Date().toISOString(),
+        acknowledged_by: user.id,
+      })
+      .eq('id', activeSession.id);
+
+    if (error) throw error;
+
+    // Notify charge nurse and primary nurse
+    await NotificationDispatcher.notifyTransferAcknowledged(patient.id, patient.room_number);
+
+    await logAudit('session_acknowledged', {});
+    
+    // Reload session to update UI
+    await loadSessionData(activeSession.id);
+  }
+
   async function escalateSession() {
     if (!activeSession || !patient) throw new Error('No active session');
 
@@ -592,6 +615,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
         orderMedication,
         giveNextDose,
         administerMedication,
+        acknowledgeSession,
         resolveSession,
         escalateSession,
         subscribeToSession,

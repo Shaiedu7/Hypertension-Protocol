@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
+import { useEmergencySession } from '../../contexts/EmergencySessionContext';
 import { DatabaseService } from '../../services/databaseService';
+import { subscribeToDashboardUpdates } from '../../services/realtimeService';
 import { Patient, EmergencySession, MedicationDose, Timer } from '../../types';
+import { MEDICATION_PROTOCOLS } from '../../utils/constants';
 import PatientCard from '../../components/PatientCard';
 import TimerCountdown from '../../components/TimerCountdown';
+import ActionButton from '../../components/ActionButton';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 interface EmergencyWithDetails {
   patient: Patient;
@@ -15,20 +20,46 @@ interface EmergencyWithDetails {
   timer: Timer | null;
   isEscalated: boolean;
   failedDoses: number;
+  initiatedBy?: { name?: string; email?: string } | null;
 }
 
-export default function AttendingDashboard() {
+export default function AttendingDashboard({ navigation }: any) {
   const { user, signOut } = useAuth();
+  const { acknowledgeSession, resolveSession, setPatient, subscribeToSession, unsubscribeFromSession } = useEmergencySession();
   const [emergencies, setEmergencies] = useState<EmergencyWithDetails[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadAllEmergencies();
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(loadAllEmergencies, 30000);
-    return () => clearInterval(interval);
+
+    const subscription = subscribeToDashboardUpdates(loadAllEmergencies);
+    return () => subscription.unsubscribe();
   }, []);
+
+  const getStepDescription = (emergency: EmergencyWithDetails): string => {
+    const algorithm = emergency.session.algorithm_selected;
+    if (!algorithm) return 'Protocol not selected yet';
+
+    const protocol = MEDICATION_PROTOCOLS[algorithm as keyof typeof MEDICATION_PROTOCOLS];
+    if (!protocol) return `${algorithm.toUpperCase()} protocol`;
+
+    const stepNumber = Math.max(emergency.session.current_step || 1, 1);
+    const doseIndex = Math.min(stepNumber - 1, protocol.doses.length - 1);
+    const dose = protocol.doses[doseIndex];
+
+    const timerRunning = emergency.timer?.is_active;
+    const lastMed = emergency.medications
+      .filter(m => m.administered_at)
+      .sort((a, b) => new Date(b.administered_at!).getTime() - new Date(a.administered_at!).getTime())[0];
+
+    const status = timerRunning
+      ? 'in progress — timer running'
+      : lastMed
+        ? `last dose at ${new Date(lastMed.administered_at!).toLocaleTimeString()}`
+        : 'next dose pending';
+
+    return `${protocol.name} Protocol • Step ${stepNumber}: ${dose.medication} ${dose.dose} ${dose.route} — ${status}`;
+  };
 
   const loadAllEmergencies = async () => {
     try {
@@ -39,10 +70,11 @@ export default function AttendingDashboard() {
         const patient = await DatabaseService.getPatient(session.patient_id);
         if (!patient) continue;
 
-        const [medications, bpReadings, timer] = await Promise.all([
+        const [medications, bpReadings, timer, initiatedBy] = await Promise.all([
           DatabaseService.getMedications(patient.id),
           DatabaseService.getBPHistory(patient.id),
-          DatabaseService.getActiveTimer(patient.id)
+          DatabaseService.getActiveTimer(patient.id),
+          DatabaseService.getUser(session.initiated_by)
         ]);
 
         // Count failed doses (administered but BP still high)
@@ -64,7 +96,8 @@ export default function AttendingDashboard() {
           bpReadings,
           timer,
           isEscalated: session.status === 'escalated',
-          failedDoses
+          failedDoses,
+          initiatedBy,
         });
       }
 
@@ -147,41 +180,33 @@ export default function AttendingDashboard() {
         ) : (
           emergencies.map((emergency) => (
             <View key={emergency.session.id} style={styles.emergencyCard}>
-              {/* Urgency Badge */}
-              <View style={[styles.urgencyBadge, { backgroundColor: getUrgencyColor(emergency) }]}>
-                <Text style={styles.urgencyText}>{getUrgencyLabel(emergency)}</Text>
-              </View>
+              {emergency.isEscalated && (
+                <View style={styles.urgencyBadge}>
+                  <Text style={styles.urgencyText}>STAT CALL</Text>
+                </View>
+              )}
 
               <View style={styles.cardContent}>
-                <PatientCard patient={emergency.patient} emergencySession={emergency.session} showDetails />
+                <PatientCard patient={emergency.patient} emergencySession={emergency.session} showDetails={false} />
 
                 {/* Algorithm & Progress */}
                 <View style={styles.treatmentInfo}>
-                  <Text style={styles.infoLabel}>Treatment:</Text>
-                  <Text style={styles.infoValue}>
-                    {emergency.session.algorithm_selected?.toUpperCase() || 'Not Selected'}
-                  </Text>
-                  <Text style={styles.infoLabel}>Step:</Text>
-                  <Text style={styles.infoValue}>{emergency.session.current_step}</Text>
+                  <Text style={styles.infoText}>{getStepDescription(emergency)}</Text>
                 </View>
 
                 {/* What Has Failed */}
                 {emergency.failedDoses > 0 && (
                   <View style={styles.failureBox}>
-                    <Text style={styles.failureTitle}>⚠️ Treatment Challenges</Text>
                     <Text style={styles.failureText}>
-                      {emergency.failedDoses} dose{emergency.failedDoses > 1 ? 's' : ''} administered, BP remains elevated
+                      ⚠️ {emergency.failedDoses} dose{emergency.failedDoses > 1 ? 's' : ''} given, BP elevated
                     </Text>
-                    <View style={styles.medsGiven}>
-                      {emergency.medications
-                        .filter(m => m.administered_at)
-                        .map(med => (
-                          <Text key={med.id} style={styles.medItem}>
-                            • {med.medication_name} {med.dose_amount} at{' '}
-                            {new Date(med.administered_at!).toLocaleTimeString()}
-                          </Text>
-                        ))}
-                    </View>
+                    {emergency.medications
+                      .filter(m => m.administered_at)
+                      .map(med => (
+                        <Text key={med.id} style={styles.medItem}>
+                          • {med.medication_name} {med.dose_amount} at {new Date(med.administered_at!).toLocaleTimeString()}
+                        </Text>
+                      ))}
                   </View>
                 )}
 
@@ -205,16 +230,101 @@ export default function AttendingDashboard() {
                   </View>
                 )}
 
+                {/* Attending Actions for Escalated Cases */}
+                {emergency.isEscalated && (
+                  <View style={styles.actionSection}>
+                    {!emergency.session.acknowledged_at ? (
+                      <ActionButton
+                        label="Acknowledge Transfer of Care"
+                        onPress={() => {
+                          Alert.alert(
+                            'Acknowledge Transfer',
+                            `Confirm you are assuming care for ${emergency.patient.anonymous_identifier}?`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              {
+                                text: 'Acknowledge',
+                                onPress: async () => {
+                                  try {
+                                    setPatient(emergency.patient);
+                                    await subscribeToSession(emergency.session.id);
+                                    await acknowledgeSession();
+                                    await loadAllEmergencies();
+                                  } catch (error) {
+                                    console.error('Failed to acknowledge:', error);
+                                    Alert.alert('Error', 'Failed to acknowledge transfer. Please try again.');
+                                  }
+                                },
+                              },
+                            ]
+                          );
+                        }}
+                        variant="primary"
+                      />
+                    ) : (
+                      <View style={styles.acknowledgedBox}>
+                        <Text style={styles.acknowledgedText}>
+                          ✓ Transfer Acknowledged • {new Date(emergency.session.acknowledged_at).toLocaleTimeString()}
+                        </Text>
+                      </View>
+                    )}
+
+                    {emergency.session.acknowledged_at && (
+                      <View style={styles.buttonRow}>
+                        <TouchableOpacity
+                          style={styles.secondaryButton}
+                          onPress={() => {
+                            setPatient(emergency.patient);
+                            subscribeToSession(emergency.session.id);
+                            navigation.navigate('BPEntry', { patient: emergency.patient });
+                          }}
+                        >
+                          <Text style={styles.secondaryButtonText}>Update Vitals</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.resolveButton}
+                          onPress={() => {
+                            Alert.alert(
+                              'Mark Case Resolved',
+                              `Confirm that ${emergency.patient.anonymous_identifier} emergency is resolved and BP is controlled?`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                  text: 'Mark Resolved',
+                                  style: 'destructive',
+                                  onPress: async () => {
+                                    setPatient(emergency.patient);
+                                    subscribeToSession(emergency.session.id);
+                                    await resolveSession();
+                                    unsubscribeFromSession();
+                                    await loadAllEmergencies();
+                                  },
+                                },
+                              ]
+                            );
+                          }}
+                        >
+                          <Text style={styles.resolveButtonText}>Mark Resolved</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+
                 {/* Session Details */}
                 <View style={styles.sessionMeta}>
                   <Text style={styles.metaText}>
-                    Started: {new Date(emergency.session.initiated_at).toLocaleString()}
+                    Started {new Date(emergency.session.initiated_at).toLocaleTimeString()}
+                    {emergency.initiatedBy?.name || emergency.initiatedBy?.email
+                      ? ` by ${emergency.initiatedBy?.name || emergency.initiatedBy?.email}`
+                      : ''}
+                    {emergency.session.escalated_at && (
+                      <Text style={styles.escalatedText}>
+                        {' '}• Escalated {new Date(emergency.session.escalated_at).toLocaleTimeString()}
+                      </Text>
+                    )}
                   </Text>
-                  {emergency.session.escalated_at && (
-                    <Text style={[styles.metaText, { color: '#dc3545', fontWeight: 'bold' }]}>
-                      Escalated: {new Date(emergency.session.escalated_at).toLocaleString()}
-                    </Text>
-                  )}
                 </View>
               </View>
             </View>
@@ -293,109 +403,149 @@ const styles = StyleSheet.create({
   },
   emergencyCard: {
     backgroundColor: '#fff',
-    margin: 12,
-    borderRadius: 12,
+    marginHorizontal: 12,
+    marginVertical: 6,
+    borderRadius: 8,
     overflow: 'hidden',
-    elevation: 3,
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   urgencyBadge: {
-    padding: 12,
+    backgroundColor: '#dc3545',
+    paddingVertical: 10,
     alignItems: 'center',
   },
   urgencyText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 16,
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
   cardContent: {
-    padding: 16,
+    padding: 12,
   },
   treatmentInfo: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 12,
-    padding: 12,
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     backgroundColor: '#f9f9f9',
-    borderRadius: 8,
+    borderRadius: 6,
   },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginRight: 8,
-  },
-  infoValue: {
-    fontSize: 14,
+  infoText: {
+    fontSize: 13,
     fontWeight: '600',
     color: '#333',
-    marginRight: 16,
+    lineHeight: 18,
   },
   failureBox: {
     backgroundColor: '#fff3cd',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#ffc107',
-  },
-  failureTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#856404',
-    marginBottom: 8,
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#ffc107',
   },
   failureText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#856404',
-    marginBottom: 8,
-  },
-  medsGiven: {
-    marginTop: 4,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   medItem: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#856404',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   latestBP: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
-    padding: 12,
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     backgroundColor: '#e7f3ff',
-    borderRadius: 8,
+    borderRadius: 6,
   },
   bpLabel: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
     marginRight: 8,
   },
   bpValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#007bff',
     marginRight: 12,
   },
   bpTime: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666',
   },
   timerSection: {
-    marginTop: 12,
+    marginTop: 8,
   },
-  sessionMeta: {
+  actionSection: {
     marginTop: 12,
     paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#dee2e6',
+  },
+  acknowledgedBox: {
+    padding: 8,
+    backgroundColor: '#d4edda',
+    borderRadius: 6,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#28a745',
+  },
+  acknowledgedText: {
+    fontSize: 12,
+    color: '#155724',
+    fontWeight: '600',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: '#6c757d',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  resolveButton: {
+    flex: 1,
+    backgroundColor: '#28a745',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  resolveButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sessionMeta: {
+    marginTop: 8,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
   },
   metaText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666',
-    marginBottom: 4,
+  },
+  escalatedText: {
+    color: '#dc3545',
+    fontWeight: 'bold',
   },
   emptyText: {
     fontSize: 16,

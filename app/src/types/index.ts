@@ -52,6 +52,8 @@ export interface EmergencySession {
   status: 'active' | 'resolved' | 'escalated';
   resolved_at?: string;
   escalated_at?: string;
+  acknowledged_at?: string;
+  acknowledged_by?: string;
 }
 
 export interface Patient {
