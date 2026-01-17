@@ -8,6 +8,7 @@ export default {
   expo: {
     name: "RWJ HP",
     slug: "app",
+    scheme: "rwjhp",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
