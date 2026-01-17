@@ -35,7 +35,9 @@ function configureHandler() {
   try {
     notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
+        shouldShowAlert: true, // Deprecated but kept for backward compatibility
+        shouldShowBanner: true,
+        shouldShowList: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
       }),
@@ -138,6 +140,21 @@ export async function scheduleNotification(
 }
 
 /**
+ * Cancel a specific scheduled notification by ID
+ */
+export async function cancelNotification(identifier: string) {
+  if (isExpoGo) return;
+
+  try {
+    const notifications = getNotifications();
+    if (!notifications) return;
+    await notifications.cancelScheduledNotificationAsync(identifier);
+  } catch (e) {
+    console.warn('[Notifications] Cancel notification failed:', e);
+  }
+}
+
+/**
  * Cancel all scheduled notifications
  */
 export async function cancelAllNotifications() {
@@ -149,6 +166,48 @@ export async function cancelAllNotifications() {
     await notifications.cancelAllScheduledNotificationsAsync();
   } catch (e) {
     console.warn('[Notifications] Cancel failed:', e);
+  }
+}
+
+/**
+ * Send remote push notification to specific user via Expo Push Service
+ * This works even when the app is completely closed
+ */
+export async function sendRemotePushNotification(
+  pushToken: string,
+  title: string,
+  body: string,
+  data: Record<string, any> = {},
+  priority: 'default' | 'normal' | 'high' = 'high'
+) {
+  if (isExpoGo) return;
+
+  try {
+    const message = {
+      to: pushToken,
+      sound: 'default',
+      title,
+      body,
+      data,
+      priority,
+      channelId: priority === 'high' ? 'critical' : 'default',
+    };
+
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+
+    const result = await response.json();
+    console.log('[Notifications] Remote push sent:', result);
+    return result;
+  } catch (error) {
+    console.warn('[Notifications] Remote push failed:', error);
   }
 }
 

@@ -74,6 +74,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error) throw error;
       if (data.user) {
         await loadUserProfile(data.user.id);
+        
+        // Register push token for remote notifications when app is closed
+        try {
+          const { registerForPushNotifications } = await import('../services/notifications');
+          const pushToken = await registerForPushNotifications();
+          
+          if (pushToken) {
+            const { error: updateError } = await supabase
+              .from('users')
+              .update({ push_token: pushToken })
+              .eq('id', data.user.id);
+            
+            if (updateError) {
+              console.error('[Auth] Failed to store push token:', updateError);
+            } else {
+              console.log('[Auth] Push token registered successfully:', pushToken);
+            }
+          } else {
+            console.warn('[Auth] No push token received from registerForPushNotifications');
+          }
+        } catch (e) {
+          console.error('[Auth] Exception registering push token:', e);
+        }
       }
     } catch (error) {
       console.error('Sign in error:', error);

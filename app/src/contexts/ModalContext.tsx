@@ -44,20 +44,21 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
   });
   const [notifiedTimers, setNotifiedTimers] = useState<Set<string>>(new Set());
 
+  // Clear notified timers when patient/session changes (prevents stale timer state after room deletion/recreation)
+  useEffect(() => {
+    setNotifiedTimers(new Set());
+  }, [activeSession?.id, patient?.id]);
+
   // Monitor for timer expiration (polling so we don't miss the moment it crosses zero)
   useEffect(() => {
     const interval = setInterval(() => {
       if (activeTimer && patient) {
         const now = new Date();
         const expiresAt = new Date(activeTimer.expires_at);
-        const startedAt = new Date(activeTimer.started_at);
         
-        // Only check timers that have been running for at least their duration
-        // This prevents showing modal for old/superseded timers
-        const timerAge = (now.getTime() - startedAt.getTime()) / (1000 * 60);
-        const shouldExpire = timerAge >= activeTimer.duration_minutes;
-
-        if (now >= expiresAt && activeTimer.is_active && !notifiedTimers.has(activeTimer.id) && shouldExpire) {
+        // Timer has expired if current time is past expires_at
+        // Check is_active to prevent showing modal for deactivated timers
+        if (now >= expiresAt && activeTimer.is_active && !notifiedTimers.has(activeTimer.id)) {
           NotificationDispatcher.notifyTimerExpired(
             patient.id,
             activeTimer.type as 'bp_recheck' | 'medication_wait',
@@ -68,7 +69,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
           setNotifiedTimers(prev => new Set(prev).add(activeTimer.id));
         }
       }
-    }, 5000); // check every 5 seconds
+    }, 2000); // check every 2 seconds for more responsive detection
 
     return () => clearInterval(interval);
   }, [activeTimer, patient, notifiedTimers]);

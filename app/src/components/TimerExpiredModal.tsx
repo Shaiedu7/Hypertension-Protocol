@@ -34,7 +34,7 @@ export default function TimerExpiredModal() {
             {/* Message */}
             <Text style={styles.message}>
               {isRecheckTimer
-                ? 'It is time to recheck the patient\'s blood pressure. Patient should have been on BP-lowering medication for 15 minutes.'
+                ? 'It is time to recheck the patient\'s blood pressure. Take the confirmatory reading now.'
                 : 'The medication wait period has expired. Reassess patient\'s blood pressure and vital signs.'}
             </Text>
 

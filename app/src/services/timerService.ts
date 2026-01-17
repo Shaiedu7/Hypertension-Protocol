@@ -203,6 +203,13 @@ export class TimerService {
    * Deactivate all timers for a patient
    */
   static async deactivateAllTimers(patientId: string): Promise<void> {
+    // Get all active timer IDs before deactivating
+    const { data: activeTimers } = await supabase
+      .from(TABLES.TIMERS)
+      .select('id')
+      .eq('patient_id', patientId)
+      .eq('is_active', true);
+
     const { error } = await supabase
       .from(TABLES.TIMERS)
       .update({ is_active: false })
@@ -210,6 +217,16 @@ export class TimerService {
       .eq('is_active', true);
 
     if (error) throw error;
+
+    // Cancel any pending notifications for these timers
+    // We cannot map timer.id to the scheduled notification id, so clear all scheduled notifications
+    // to prevent stale recheck alerts from firing after an emergency is confirmed.
+    const { cancelAllNotifications } = await import('./notifications');
+    try {
+      await cancelAllNotifications();
+    } catch (e) {
+      // If cancellation fails, continue without throwing to avoid blocking workflow
+    }
 
     // End Live Activity when all timers are deactivated
     await LiveActivityService.endCurrentActivity();

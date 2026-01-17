@@ -149,15 +149,11 @@ export default function NurseDashboard({ navigation }: any) {
   };
 
   const handleSelectAlgorithm = async (algorithm: 'labetalol' | 'hydralazine' | 'nifedipine', session: any, p: Patient) => {
-    focusSession(session, p);
-    await selectAlgorithm(algorithm);
-    await loadPatients();
+    Alert.alert('Requires provider order', 'A resident/attending must select the treatment algorithm.');
   };
 
   const handleGiveNextDose = async (session: any, p: Patient) => {
-    focusSession(session, p);
-    await giveNextDose();
-    await loadPatients();
+    Alert.alert('Requires provider order', 'A resident/attending must order and administer protocol doses.');
   };
 
   const handleCreatePatient = async () => {
@@ -271,33 +267,10 @@ export default function NurseDashboard({ navigation }: any) {
                     </View>
                   )}
 
+                  {/* Nurses cannot select algorithms or administer doses - provider only */}
                   {!session.algorithm_selected && (
                     <View style={styles.algorithmInline}>
-                      <Text style={styles.algorithmInlineLabel}>Select Algorithm:</Text>
-                      <View style={styles.algorithmButtonsRow}>
-                        <TouchableOpacity
-                          style={[styles.inlineAlgoBtn, p.has_asthma && styles.inlineAlgoBtnDisabled]}
-                          onPress={() => !p.has_asthma && handleSelectAlgorithm('labetalol', session, p)}
-                          disabled={p.has_asthma}
-                        >
-                          <Text style={styles.inlineAlgoBtnText}>Labetalol</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={styles.inlineAlgoBtn}
-                          onPress={() => handleSelectAlgorithm('hydralazine', session, p)}
-                        >
-                          <Text style={styles.inlineAlgoBtnText}>Hydralazine</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={styles.inlineAlgoBtn}
-                          onPress={() => handleSelectAlgorithm('nifedipine', session, p)}
-                        >
-                          <Text style={styles.inlineAlgoBtnText}>Nifedipine</Text>
-                        </TouchableOpacity>
-                      </View>
-                      {p.has_asthma && (
-                        <Text style={styles.asthmaWarningInline}>⚠️ Labetalol contraindicated with asthma</Text>
-                      )}
+                      <Text style={styles.algorithmWaitingText}>⏳ Awaiting provider algorithm selection</Text>
                     </View>
                   )}
 
@@ -307,11 +280,7 @@ export default function NurseDashboard({ navigation }: any) {
                       <Text style={styles.nextDoseValue}>
                         {getNextDose(session)?.medication} {getNextDose(session)?.dose} {getNextDose(session)?.route}
                       </Text>
-                      <ActionButton
-                        label="Mark Given"
-                        onPress={() => handleGiveNextDose(session, p)}
-                        variant="primary"
-                      />
+                      <Text style={styles.algorithmWaitingText}>⏳ Awaiting provider order</Text>
                     </View>
                   )}
                 </TouchableOpacity>
@@ -792,5 +761,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     fontWeight: '600',
+  },
+  algorithmWaitingText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

@@ -259,15 +259,22 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
 
     const isHigh = isBPHigh(sys, dia);
 
-    // Show checklist for high BP readings
-    if (isHigh && !isChecklistComplete()) {
+    // Show checklist reminder for high BP readings and WAIT for user confirmation
+    if (isHigh && !showChecklist) {
       setShowChecklist(true);
-      return;
+      return; // Wait for user to click Proceed on modal
+    }
+
+    // If we get here and checklist modal was shown, user clicked Proceed
+    // Close the checklist and proceed with submission
+    if (showChecklist) {
+      setShowChecklist(false);
     }
 
     setLoading(true);
 
     try {
+      // Proceed regardless of checklist completion
       await recordBPReading(sys, dia, isChecklistComplete(), undefined, routePatient);
 
       const isControlled = isBPInTargetRange(sys, dia);
@@ -436,16 +443,10 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
         <View style={styles.modalOverlay}>
           <View style={styles.bottomSheetContainer}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.checklistTitle}>Positioning Checklist</Text>
+            <Text style={styles.checklistTitle}>Positioning Reminder</Text>
             <Text style={styles.checklistSubtitle}>
               Per RWJ Protocol: Verify proper positioning
             </Text>
-
-            <View style={styles.protocolNote}>
-              <Text style={styles.protocolNoteText}>
-                ⚠️ Do NOT reposition patient to lower BP
-              </Text>
-            </View>
 
             <ScrollView style={styles.checklistScroll} bounces={false}>
               {[
@@ -495,14 +496,12 @@ export default function BPEntryScreen({ navigation, route }: BPEntryScreenProps)
                 variant="secondary"
                 disabled={loading}
               />
-              {isChecklistComplete() && (
-                <ActionButton
-                  label="Confirm & Submit"
-                  onPress={handleSubmit}
-                  variant="primary"
-                  loading={loading}
-                />
-              )}
+              <ActionButton
+                label="Proceed"
+                onPress={handleSubmit}
+                variant="primary"
+                loading={loading}
+              />
             </View>
           </View>
         </View>
@@ -779,19 +778,7 @@ const styles = StyleSheet.create({
   checklistScroll: {
     maxHeight: 400,
   },
-  protocolNote: {
-    backgroundColor: '#fff3cd',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ffc107',
-  },
-  protocolNoteText: {
-    fontSize: 13,
-    color: '#856404',
-    lineHeight: 18,
-  },
+
   checklistItemRow: {
     flexDirection: 'row',
     alignItems: 'center',

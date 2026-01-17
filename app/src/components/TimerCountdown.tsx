@@ -117,11 +117,22 @@ export default function TimerCountdown({ timer, size = 'medium', onExpire }: Tim
     size === 'small' && styles.labelSmall,
   ];
 
-  const timerLabel = timer.type === 'bp_recheck' ? 'BP Recheck In' : 'Next BP Check In';
+  const getTimerLabel = () => {
+    switch (timer.type) {
+      case 'bp_recheck':
+        return 'Confirmatory BP Due';
+      case 'administration_deadline':
+        return 'First Dose Due';
+      case 'medication_wait':
+        return 'Next BP Check Due';
+      default:
+        return 'Timer';
+    }
+  };
 
   return (
     <View style={containerStyle}>
-      <Text style={labelStyle}>{timerLabel}</Text>
+      <Text style={labelStyle}>{getTimerLabel()}</Text>
       <Text style={timerStyle}>{formattedTime}</Text>
     </View>
   );

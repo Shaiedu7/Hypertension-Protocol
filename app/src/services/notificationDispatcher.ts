@@ -27,7 +27,7 @@ export class NotificationDispatcher {
     const priority = WorkflowEngine.getNotificationPriority('confirmed_emergency');
     const location = roomNumber ? ` in Room ${roomNumber}` : '';
     
-    // System notification
+    // System notification (local - for when app is open)
     await scheduleNotification(
       '🚨 HYPERTENSIVE EMERGENCY',
       `Confirmed emergency${location}. BP: ${systolic}/${diastolic}. Immediate treatment required.`,
@@ -64,6 +64,32 @@ export class NotificationDispatcher {
       undefined,
       patientId
     );
+
+    // Send remote push to residents (works when app is closed)
+    try {
+      const { sendRemotePushNotification } = await import('./notifications');
+      const residents = await DatabaseService.getUsersByRole('resident');
+      
+      console.log(`[NotificationDispatcher] Found ${residents.length} residents`);
+      
+      for (const resident of residents) {
+        if (resident.push_token) {
+          console.log(`[NotificationDispatcher] Sending remote push to resident: ${resident.id}`);
+          const result = await sendRemotePushNotification(
+            resident.push_token,
+            '🚨 HYPERTENSIVE EMERGENCY',
+            `New emergency${location}. BP: ${systolic}/${diastolic}. Action required.`,
+            { patientId, event: 'confirmed_emergency', priority: 'critical' },
+            'high'
+          );
+          console.log(`[NotificationDispatcher] Remote push result:`, result);
+        } else {
+          console.warn(`[NotificationDispatcher] Resident ${resident.id} has no push token`);
+        }
+      }
+    } catch (error) {
+      console.error('[NotificationDispatcher] Remote push exception:', error);
+    }
   }
 
   /**
@@ -158,8 +184,13 @@ export class NotificationDispatcher {
       priority
     );
 
-    // Notify only nurse and charge nurse (they take BP readings)
-    const recipients: ('nurse' | 'chargeNurse')[] = ['nurse', 'chargeNurse'];
+    // BP recheck is nurse-only per protocol; medication wait needs provider awareness
+    // Per RWJ protocol: nurse does 15-min recheck, only notifies provider AFTER confirmatory BP
+    const recipients: ('nurse' | 'chargeNurse' | 'resident')[] = 
+      timerType === 'bp_recheck' 
+        ? ['nurse', 'chargeNurse'] // Only nursing staff for initial recheck
+        : ['nurse', 'chargeNurse', 'resident']; // Provider oversight for medication timing
+        
     for (const role of recipients) {
       await DatabaseService.createNotification(
         priority,

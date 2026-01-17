@@ -102,6 +102,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
 
     // Deactivate all existing timers (including observation timer)
     await TimerService.deactivateAllTimers(patientId);
+    setActiveTimer(null);
 
     const { data, error } = await supabase
       .from(TABLES.EMERGENCY_SESSIONS)
@@ -131,18 +132,14 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     // Load patient data
     await loadPatientData(patientId);
     
-    // Get patient info for notifications
-    const patientData = await supabase
+    // Start administration deadline timer at emergency confirmation (protocol: 30-60 min window)
+    const { data: patientRoomData } = await supabase
       .from(TABLES.PATIENTS)
       .select('room_number')
       .eq('id', patientId)
       .single();
-    
-    // Create 30-60 min administration deadline timer per RWJ protocol
-    await TimerService.createAdministrationDeadlineTimer(
-      patientId,
-      patientData.data?.room_number
-    );
+    const patientRoom = patient?.room_number || patientRoomData?.room_number;
+    await TimerService.createAdministrationDeadlineTimer(patientId, patientRoom);
     
     return session;
   }
@@ -300,6 +297,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
 
   async function selectAlgorithm(algorithm: 'labetalol' | 'hydralazine' | 'nifedipine') {
     if (!activeSession || !patient) throw new Error('No active session or patient');
+    if (!user || user.role === 'nurse') throw new Error('Provider order required');
 
     const { error } = await supabase
       .from(TABLES.EMERGENCY_SESSIONS)
@@ -307,9 +305,6 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       .eq('id', activeSession.id);
 
     if (error) throw error;
-
-    // Create administration deadline timer (45 minutes)
-    await TimerService.createAdministrationDeadlineTimer(patient.id, patient.room);
 
     // Notify team about algorithm selection
     await NotificationDispatcher.notifyAlgorithmSelected(patient, algorithm);
@@ -324,6 +319,7 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
     waitTime: number
   ) {
     if (!user || !activeSession || !patient) throw new Error('Missing required data');
+    if (user.role === 'nurse') throw new Error('Provider order required');
 
     // Extract dose number and amount from current step
     const currentStep = (activeSession.current_step || 0) + 1;
@@ -351,6 +347,9 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       .update({ current_step: currentStep })
       .eq('id', activeSession.id);
 
+    // Keep local session state in sync so UI step indicator updates immediately
+    setActiveSession(prev => prev ? { ...prev, current_step: currentStep } : prev);
+
     await logAudit('medication_ordered', { 
       medicationName, 
       dose, 
@@ -358,10 +357,20 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       waitTime,
       doseNumber: currentStep 
     });
+
+    // Notify nurse to administer
+    await NotificationDispatcher.notifyMedicationOrdered(
+      patient.id,
+      medicationName,
+      dose,
+      user.id,
+      patient.room_number
+    );
   }
 
   async function giveNextDose() {
     if (!user || !activeSession || !patient) throw new Error('Missing required data');
+    if (user.role === 'nurse') throw new Error('Provider order required');
 
     const algorithm = activeSession.algorithm_selected;
     if (!algorithm) throw new Error('Algorithm not selected');
@@ -403,6 +412,9 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       .update({ current_step: doseNumber })
       .eq('id', activeSession.id);
 
+    // Update local session state so resident step indicator reflects the new dose
+    setActiveSession(prev => prev ? { ...prev, current_step: doseNumber } : prev);
+
     // Reset timers and start the medication wait timer
     await TimerService.deactivateAllTimers(patient.id);
     const timer = await TimerService.createMedicationWaitTimer(patient.id, nextDose.waitTime, patient.room_number);
@@ -415,10 +427,18 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       doseNumber,
       waitTime: nextDose.waitTime,
     });
+
+    await NotificationDispatcher.notifyMedicationAdministered(
+      patient.id,
+      nextDose.medication,
+      nextDose.dose,
+      nextDose.waitTime
+    );
   }
 
   async function administerMedication(medicationId: string) {
     if (!user || !patient) throw new Error('User not authenticated or no patient');
+    if (user.role === 'nurse') throw new Error('Provider order required');
 
     // Get medication details to determine wait time
     const { data: medication, error: fetchError } = await supabase
@@ -460,6 +480,13 @@ export function EmergencySessionProvider({ children }: { children: React.ReactNo
       algorithm,
       waitTime 
     });
+
+    await NotificationDispatcher.notifyMedicationAdministered(
+      patient.id,
+      med.medication_name,
+      `${med.dose_amount}${med.unit}`,
+      waitTime
+    );
   }
 
   async function resolveSession() {

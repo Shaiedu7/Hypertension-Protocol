@@ -321,4 +321,14 @@ export class DatabaseService {
     if (error) return null;
     return data;
   }
+
+  static async getUsersByRole(role: UserRole): Promise<{ id: string; push_token?: string }[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, push_token')
+      .eq('role', role);
+
+    if (error) return [];
+    return data;
+  }
 }
